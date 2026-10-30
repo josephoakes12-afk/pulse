@@ -5,6 +5,23 @@
     "accounts": 12,
     "bookings7d": 38
   },
+  "details": {
+    "activeBusinesses7d": 5,
+    "averageBookings7d": 3.2
+  },
+  "breakdowns": [
+    {
+      "id": "bookings-by-business-7d",
+      "title": "Bookings by business · 7d",
+      "rows": [
+        { "id": "oak", "label": "Oak Studio", "value": 12 },
+        { "id": "elm", "label": "Elm Studio", "value": 8 },
+        { "id": "moss", "label": "Moss Studio", "value": 7 },
+        { "id": "fern", "label": "Fern Studio", "value": 6 },
+        { "id": "other", "label": "Other businesses", "value": 5 }
+      ]
+    }
+  ],
   "events": [
     {
       "id": "business-created:demo-001",

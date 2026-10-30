@@ -87,17 +87,121 @@ public struct HTTPConnector: SummaryConnector {
                 }
             }
         }
-        return ProjectSnapshot(projectID: connection.id, metrics: values, events: events.sorted { $0.occurredAt < $1.occurredAt }, measuredAt: measuredAt, fetchedAt: now, coverage: coverage)
+        let details = expandedMetrics(in: object, connection: connection)
+        let breakdowns = expandedBreakdowns(in: object, projectID: connection.id)
+        return ProjectSnapshot(projectID: connection.id, metrics: values, events: events.sorted { $0.occurredAt < $1.occurredAt }, measuredAt: measuredAt, fetchedAt: now, coverage: coverage, details: details.isEmpty ? nil : details, breakdowns: breakdowns.isEmpty ? nil : breakdowns)
     }
 
     public static func discover(data: Data) throws -> [DiscoveredMetric] {
         let object = try summaryObject(data)
+        let found = discoverSummaryNumbers(in: object)
+        guard !found.isEmpty else { throw PulseError.response("No summary numbers found. Use an endpoint with numeric totals, or choose Advanced to map values yourself.") }
+        return found
+    }
+
+    private static func discoverSummaryNumbers(in object: [String: Any]) -> [DiscoveredMetric] {
         let metrics = object["metrics"] as? [String: Any]
         let root = metrics ?? object
         let rootPath = metrics == nil ? [] : ["metrics"]
-        let found = discoverNumbers(in: root, rootObject: object, path: rootPath, depth: rootPath.count, remaining: 30)
-        guard !found.isEmpty else { throw PulseError.response("No summary numbers found. Use an endpoint with numeric totals, or choose Advanced to map values yourself.") }
-        return found
+        return discoverNumbers(in: root, rootObject: object, path: rootPath, depth: rootPath.count, remaining: 30)
+    }
+
+    /// Optional expanded summaries never require another request. Only numeric
+    /// summary fields are inferred; record arrays and identities are not explored.
+    private static func expandedMetrics(in object: [String: Any], connection: ProjectConnection) -> [MetricValue] {
+        let headlinePaths = Set(connection.metrics.map(\.path))
+        var labels = Set(connection.metrics.map { normalizedLabel($0.label) })
+        var identities: Set<String> = []
+        var details: [MetricValue] = []
+        let explicit = object["__pulse_details"] ?? object["details"]
+
+        if let fields = explicit as? [String: Any] {
+            // The explicit details container is deliberately not part of headline discovery.
+            for candidate in discoverNumbers(in: fields, rootObject: fields, path: [], depth: 0, remaining: 30) {
+                guard details.count < 6 else { break }
+                let originalPath = object["__pulse_details"] == nil ? "details." + candidate.path : "__pulse_details." + candidate.path
+                let label = normalizedLabel(candidate.label)
+                guard !headlinePaths.contains(originalPath), labels.insert(label).inserted else { continue }
+                identities.insert(candidate.path)
+                details.append(MetricValue(id: MetricIdentity.uuid(projectID: connection.id, path: "details:" + candidate.path), label: candidate.label, value: candidate.previewValue))
+            }
+        } else if let rows = explicit as? [[String: Any]] {
+            for row in rows.prefix(60) {
+                guard details.count < 6 else { break }
+                guard let label = cleanText(row["label"], limit: 40),
+                      let value = displayValue(row["value"]) else { continue }
+                let identity = cleanText(row["id"], limit: 200) ?? label
+                guard !headlinePaths.contains(identity), identities.insert(identity).inserted,
+                      labels.insert(normalizedLabel(label)).inserted else { continue }
+                details.append(MetricValue(id: MetricIdentity.uuid(projectID: connection.id, path: "details:" + identity), label: label, value: value))
+            }
+        }
+
+        for candidate in discoverSummaryNumbers(in: object) {
+            guard details.count < 6 else { break }
+            guard !headlinePaths.contains(candidate.path), labels.insert(normalizedLabel(candidate.label)).inserted else { continue }
+            details.append(MetricValue(id: MetricIdentity.uuid(projectID: connection.id, path: "extra:" + candidate.path), label: candidate.label, value: candidate.previewValue))
+        }
+        return details
+    }
+
+    private static func expandedBreakdowns(in object: [String: Any], projectID: UUID) -> [MetricBreakdown] {
+        guard let groups = (object["__pulse_breakdowns"] ?? object["breakdowns"]) as? [[String: Any]] else { return [] }
+        var result: [MetricBreakdown] = []
+        var groupIDs: Set<String> = []
+        for group in groups.prefix(20) {
+            guard result.count < 2 else { break }
+            guard let title = cleanText(group["title"], limit: 80),
+                  let rawRows = group["rows"] as? [[String: Any]] else { continue }
+            let identity = cleanText(group["id"], limit: 200) ?? title
+            guard groupIDs.insert(identity).inserted else { continue }
+            var rows: [MetricBreakdownRow] = []
+            var seenIDs: Set<String> = []
+            var labelOccurrences: [String: Int] = [:]
+            for rawRow in rawRows.prefix(100) {
+                guard let label = cleanText(rawRow["label"], limit: 80),
+                      let value = displayValue(rawRow["value"]) else { continue }
+                let rowID: String
+                if let provided = cleanText(rawRow["id"], limit: 200) { rowID = provided }
+                else {
+                    // Identical display names do not establish identical people.
+                    let occurrence = (labelOccurrences[label] ?? 0) + 1
+                    labelOccurrences[label] = occurrence
+                    rowID = "label:\(label):\(occurrence)"
+                }
+                guard seenIDs.insert(rowID).inserted else { continue }
+                // Read one extra valid row so the drawer can accurately indicate a cap.
+                rows.append(MetricBreakdownRow(id: rowID, label: label, value: value))
+                if rows.count == 11 { break }
+            }
+            guard !rows.isEmpty else { continue }
+            let truncated = (group["truncated"] as? Bool == true) || rows.count > 10 || rawRows.count > 100
+            result.append(MetricBreakdown(id: MetricIdentity.uuid(projectID: projectID, path: "breakdown:" + identity).uuidString,
+                                          title: title, rows: Array(rows.prefix(10)), truncated: truncated))
+        }
+        return result
+    }
+
+    private static func cleanText(_ value: Any?, limit: Int) -> String? {
+        guard let text = value as? String else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let controls = CharacterSet.controlCharacters
+        guard !trimmed.isEmpty, trimmed.count <= limit,
+              !trimmed.unicodeScalars.contains(where: { controls.contains($0) }) else { return nil }
+        return trimmed
+    }
+
+    private static func displayValue(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        if let number = value as? NSNumber,
+           CFGetTypeID(number) == CFBooleanGetTypeID() { return nil }
+        if let string = value as? String,
+           cleanText(string, limit: 120) == nil { return nil }
+        return try? scalar(at: "value", in: ["value": value])
+    }
+
+    private static func normalizedLabel(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private static func discoverNumbers(in dictionary: [String: Any], rootObject: [String: Any], path: [String], depth: Int, remaining: Int) -> [DiscoveredMetric] {
@@ -151,7 +255,7 @@ public struct HTTPConnector: SummaryConnector {
         let compact = words.joined()
         let privateWords: Set<String> = ["id", "ids", "uuid", "email", "phone", "mobile", "password", "secret", "token", "key", "apikey", "credential", "credentials", "authorization", "signature", "address", "latitude", "longitude", "lat", "lng", "postcode", "zipcode", "dob"]
         if words.contains(where: privateWords.contains) { return true }
-        if ["key", "apikey", "accesskey", "privatekey", "publickey", "accountnumber", "phonenumber", "ip", "ipaddress", "events", "timestamp", "createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "date", "time"].contains(compact) { return true }
+        if ["key", "apikey", "accesskey", "privatekey", "publickey", "accountnumber", "phonenumber", "ip", "ipaddress", "events", "timestamp", "createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "date", "time", "details", "breakdowns", "pulsedetails", "pulsebreakdowns"].contains(compact) { return true }
         return compact.hasSuffix("timestamp") || compact.hasSuffix("uuid") || compact.hasSuffix("datetime")
             || ["createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "lastseen", "lastactive", "lastlogin"].contains(where: compact.hasPrefix)
     }

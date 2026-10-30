@@ -67,7 +67,7 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        showPanel()
+        if !flag && !popover.isShown { showPanel() }
         return false
     }
 
@@ -135,7 +135,7 @@ enum AppWindows {
     }
 
     static func showPreview(store: AppStore) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 364, height: 420), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 364, height: 680), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Pulse"
         window.contentView = NSHostingView(rootView: PulsePanel(store: store))
         window.isReleasedWhenClosed = false

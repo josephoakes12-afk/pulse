@@ -16,6 +16,7 @@ struct AddProjectView: View {
     @State private var candidates: [DiscoveredMetric] = []
     @State private var selection: Set<String> = []
     @State private var tables: [DatabaseTable] = []
+    @State private var relationships: [DatabaseRelationship] = []
     @State private var tableSelection: Set<String> = []
     @State private var search = ""
     @State private var connected: ProjectConnection?
@@ -86,14 +87,17 @@ struct AddProjectView: View {
         .onChange(of: secret) { _, _ in invalidate() }
         .onChange(of: auth) { _, _ in invalidate() }
         .onChange(of: header) { _, _ in invalidate() }
-        .onChange(of: store.connections) { _, _ in
-            if advanced { finish(); NotificationCenter.default.post(name: .pulseShowPanel, object: nil) }
+        .onChange(of: store.connections) { previous, current in
+            let previousIDs = Set(previous.map(\.id))
+            if advanced && current.contains(where: { !previousIDs.contains($0.id) }) {
+                finish(); NotificationCenter.default.post(name: .pulseShowPanel, object: nil)
+            }
         }
         .sheet(isPresented: $advanced) { ConnectionEditor(store: store, existing: nil) }
     }
 
-    private var title: String { step == .connection ? "Add a Project" : step == .tables ? "What would you like to count?" : "Choose your numbers" }
-    private var subtitle: String { step == .connection ? "Connect a source. Pulse finds the numbers." : step == .tables ? "Choose up to three tables or views." : "Keep up to three. You can change them later." }
+    private var title: String { step == .connection ? "Add a Project" : step == .tables ? "What would you like to count?" : "Headline numbers" }
+    private var subtitle: String { step == .connection ? "Connect a source. Pulse finds the numbers." : step == .tables ? "Choose up to three tables or views." : "Choose up to three." }
     private var primaryTitle: String { saving ? "Adding…" : busy ? "Connecting…" : step == .connection ? "Connect" : step == .tables ? "Preview" : "Add Project" }
     private var canContinue: Bool { step == .connection ? !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty : step == .tables ? !tableSelection.isEmpty : !selection.isEmpty && !projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
@@ -202,7 +206,20 @@ struct AddProjectView: View {
                 let discovered = try await PostgresConnector().discoverTables(connection: base, secret: effectiveSecret.isEmpty ? nil : effectiveSecret)
                 try Task.checkCancellation()
                 guard !discovered.isEmpty else { throw PulseError.response("No readable tables were found. Check this account’s access.") }
-                connected = base; tables = discovered; tableSelection = []; step = .tables
+                let foundRelationships = (try? await PostgresConnector().discoverRelationships(connection: base, secret: effectiveSecret.isEmpty ? nil : effectiveSecret, tables: discovered)) ?? []
+                try Task.checkCancellation()
+                connected = base; tables = discovered; relationships = foundRelationships
+                let recommended = PostgresConnector.recommendedTables(from: foundRelationships)
+                if !recommended.isEmpty {
+                    tableSelection = Set(recommended.map(\.id))
+                    var configured = try PostgresConnector.countingConnection(base: base, tables: recommended)
+                    configured = PostgresConnector.configureAnalytics(base: configured, tables: recommended, relationships: foundRelationships)
+                    let snapshot = try await store.collect(configured, secret: effectiveSecret.isEmpty ? nil : effectiveSecret)
+                    try Task.checkCancellation()
+                    connected = configured
+                    candidates = zip(configured.metrics, snapshot.metrics).map { DiscoveredMetric(path: $0.path, label: $0.label, previewValue: $1.value) }
+                    selection = Set(candidates.map(\.id)); step = .numbers
+                } else { tableSelection = []; step = .tables }
             }
         } catch is CancellationError { }
         catch { self.error = error.localizedDescription; focused = secret.isEmpty ? .address : .secret }
@@ -213,7 +230,9 @@ struct AddProjectView: View {
         busy = true; error = nil
         defer { busy = false }
         do {
-            let configured = try PostgresConnector.countingConnection(base: connected, tables: tables.filter { tableSelection.contains($0.id) })
+            let selectedTables = tables.filter { tableSelection.contains($0.id) }
+            var configured = try PostgresConnector.countingConnection(base: connected, tables: selectedTables)
+            configured = PostgresConnector.configureAnalytics(base: configured, tables: selectedTables, relationships: relationships)
             let snapshot = try await store.collect(configured, secret: secret.isEmpty ? nil : secret)
             try Task.checkCancellation()
             self.connected = configured
@@ -230,9 +249,7 @@ struct AddProjectView: View {
         connection.name = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             if kind == .postgres && imported == nil {
-                let previewedTables = tables.filter { tableSelection.contains($0.id) }
-                let finalTables = previewedTables.enumerated().filter { selection.contains("metric_\($0.offset)") }.map(\.element)
-                connection = try PostgresConnector.countingConnection(base: connection, tables: finalTables)
+                connection = try PostgresConnector.selectedCountingConnection(base: connection, metricPaths: selection)
             } else {
                 connection.metrics = candidates.filter { selection.contains($0.id) }.map { MetricDefinition(label: $0.label, path: $0.path) }
             }

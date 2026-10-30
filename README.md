@@ -4,6 +4,8 @@ A small, local macOS menu-bar app for the few project numbers you want to keep a
 
 Each project gets a compact row with up to three metrics. New source events can produce optional desktop notifications. Demo data is clearly labelled; connecting a service does not invent measurements that it does not already record.
 
+Expand a row with its arrow to see available extra KPIs and grouped counts. Database grouping uses declared foreign keys; API grouping must be supplied by the source. The project name opens its dashboard or source in your default browser, with the destination available on hover. Supabase project links are inferred from recognized connection addresses; an explicit project link in Advanced takes priority.
+
 ## Run
 
 Requires macOS 14 or later and Xcode with Swift 6.2 or later.
@@ -15,6 +17,28 @@ scripts/run.sh
 
 The build script creates `build/Pulse.app` and signs it locally for development. It does not install a background service, publish a release, or notarize the app for distribution. To build without opening it, run `scripts/build-app.sh`. Use `scripts/run.sh debug` for a faster development build.
 
+### Optional PostgreSQL integration test
+
+Use a **new disposable local test database**, never a live project. As a local PostgreSQL administrator with permission to create roles:
+
+```sh
+createdb --host=127.0.0.1 pulse_test_analytics
+psql --host=127.0.0.1 -v ON_ERROR_STOP=1 -d pulse_test_analytics -f Tests/Fixtures/postgres-analytics.sql
+psql --host=127.0.0.1 -d pulse_test_analytics -c '\password pulse_reader'
+```
+
+The one-shot fixture creates synthetic users/bookings, empty tables, a hidden schema and a new SELECT-only `pulse_reader` login. It deliberately fails if that role or the fixture objects already exist. Set a test-only password at the prompt. In zsh, run the opt-in check without putting the password in the URL or shell history:
+
+```sh
+read -s 'PULSE_TEST_POSTGRES_PASSWORD?Test database password: '
+export PULSE_TEST_POSTGRES_PASSWORD
+PULSE_TEST_POSTGRES_URL='postgresql://pulse_reader@127.0.0.1:5432/pulse_test_analytics?sslmode=disable' \
+  swift test --configuration release --filter postgresAnalyticsAgainstLocalSyntheticFixture
+unset PULSE_TEST_POSTGRES_PASSWORD
+```
+
+The test accepts loopback addresses only and never provisions or changes a database. Without `PULSE_TEST_POSTGRES_URL`, it does not connect. The password variable is optional when the disposable server uses local trust authentication.
+
 ## Add a project
 
 Click **Add Project**, paste the API URL or database connection details, and enter its credential if needed. Connect to preview the available numbers, choose up to three, then add the project. Custom paths, queries and other settings remain available in Advanced.
@@ -25,7 +49,7 @@ For a reusable setup, import a project file such as [examples/project.pulse.json
 
 ## Connect a service
 
-The guided setup detects API numbers or lists readable database tables and views. Database selections count rows; custom filters and queries remain in Advanced. The default refresh interval is five minutes.
+The guided setup detects API numbers and readable database tables. A single clear, declared relationship can preselect headline counts and add averages and grouped counts automatically. Otherwise, choose the tables to count. Custom filters and queries remain in Advanced. The default refresh interval is five minutes.
 
 ### HTTP / JSON
 
@@ -40,6 +64,10 @@ See [examples/summary.json](examples/summary.json) for a complete response and [
 | `measuredAt` | ISO 8601 time the source measured its numbers |
 | `coverage` | Short qualification, such as `Consenting web readers` |
 | `events` | Events with stable `id`, short `title`, ISO 8601 `occurredAt`, and optional `url` |
+| `details` | Optional extra KPIs, as an object or a list of labelled values |
+| `breakdowns` | Optional groups with `title` and `rows` containing `id`, `label` and `value` |
+
+Additional numeric fields can become extra KPIs automatically. Pulse shows at most six extra KPIs, two groups and ten rows per group. It does not infer totals from arbitrary record arrays. Database groups use declared foreign keys and available display names; averages include visible parents with zero associated records, and unlinked records are counted separately. Missing or ambiguous relationships need explicit source mapping.
 
 Keep event IDs stable across responses. Retain enough history at the source for Pulse to catch up after being offline. The first successful collection establishes a baseline rather than notifying about old events.
 

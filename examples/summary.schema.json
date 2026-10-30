@@ -1,25 +1,168 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Pulse HTTP summary",
-  "description": "Metrics may be scalar values anywhere in the object, selected by dot paths. These optional fields add timing, scope and new-event alerts.",
+  "description": "Summary metrics selected by dot paths, with optional expanded KPIs, grouped counts, timing and event alerts.",
   "type": "object",
   "properties": {
-    "measuredAt": { "type": "string", "format": "date-time" },
-    "coverage": { "type": "string", "maxLength": 160 },
+    "measuredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "coverage": {
+      "type": "string",
+      "maxLength": 160
+    },
     "events": {
       "type": "array",
       "maxItems": 1000,
       "items": {
         "type": "object",
-        "required": ["id", "title", "occurredAt"],
+        "required": [
+          "id",
+          "title",
+          "occurredAt"
+        ],
         "properties": {
-          "id": { "type": "string", "minLength": 1, "maxLength": 200 },
-          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
-          "occurredAt": { "type": "string", "format": "date-time" },
-          "url": { "type": "string", "format": "uri", "pattern": "^https?://" }
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "pattern": "^https?://"
+          }
         }
+      }
+    },
+    "details": {
+      "description": "Optional expanded KPIs. Pulse displays at most six and keeps headline metrics separate.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "pattern": "^[+-]?(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+              }
+            ]
+          }
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/detail"
+          }
+        }
+      ]
+    },
+    "breakdowns": {
+      "description": "Explicit aggregate groups, not raw user or booking records. Pulse shows at most two groups and ten rows per group.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/breakdown"
       }
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "$defs": {
+    "value": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      ]
+    },
+    "detail": {
+      "type": "object",
+      "required": [
+        "label",
+        "value"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "value": {
+          "$ref": "#/$defs/value"
+        }
+      }
+    },
+    "row": {
+      "type": "object",
+      "required": [
+        "label",
+        "value"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "value": {
+          "$ref": "#/$defs/value"
+        }
+      }
+    },
+    "breakdown": {
+      "type": "object",
+      "required": [
+        "title",
+        "rows"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/row"
+          }
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
 }

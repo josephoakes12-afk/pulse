@@ -14,7 +14,7 @@ private func discoveryDatabase() -> ProjectConnection {
     #expect(result.endpoint == base.endpoint)
     #expect(result.query == #"SELECT (SELECT count(*) FROM "public"."users") AS metric_0, (SELECT count(*) FROM "reporting"."active_bookings") AS metric_1"#)
     #expect(result.metrics.map(\.path) == ["metric_0", "metric_1"])
-    #expect(result.metrics.map(\.label) == ["Users records", "Active bookings records"])
+    #expect(result.metrics.map(\.label) == ["Users", "Active bookings"])
     try ConnectorValidation.validate(result)
 }
 
@@ -43,14 +43,14 @@ private func discoveryDatabase() -> ProjectConnection {
     let table = DatabaseTable(schema: "public", name: String(repeating: "a", count: 63), isView: false)
     let result = try PostgresConnector.countingConnection(base: discoveryDatabase(), tables: [table])
     #expect(result.metrics[0].label.count == 40)
-    #expect(result.metrics[0].label.hasSuffix(" records"))
+    #expect(!result.metrics[0].label.hasSuffix(" records"))
     try ConnectorValidation.validate(result)
 }
 
 @Test func generatedCountsQualifyMatchingTableNamesAcrossSchemas() throws {
     let tables = [DatabaseTable(schema: "public", name: "users", isView: false), DatabaseTable(schema: "reporting", name: "users", isView: true)]
     let result = try PostgresConnector.countingConnection(base: discoveryDatabase(), tables: tables)
-    #expect(result.metrics.map(\.label) == ["Public · Users records", "Reporting · Users records"])
+    #expect(result.metrics.map(\.label) == ["Public · Users", "Reporting · Users"])
     #expect(result.metrics.map(\.path) == ["metric_0", "metric_1"])
     #expect(result.query.contains(#"FROM "public"."users""#))
     #expect(result.query.contains(#"FROM "reporting"."users""#))
@@ -61,5 +61,5 @@ private func discoveryDatabase() -> ProjectConnection {
     let tables = [DatabaseTable(schema: prefix + "one", name: "users", isView: false), DatabaseTable(schema: prefix + "two", name: "users", isView: false), DatabaseTable(schema: prefix + "three", name: "users", isView: false)]
     let result = try PostgresConnector.countingConnection(base: discoveryDatabase(), tables: tables)
     #expect(Set(result.metrics.map(\.label)).count == 3)
-    #expect(result.metrics.allSatisfy { $0.label.count <= 40 && $0.label.hasSuffix(" records") })
+    #expect(result.metrics.allSatisfy { $0.label.count <= 40 })
 }

@@ -21,6 +21,7 @@ final class AppStore: ObservableObject {
     private var lastAttempts: [UUID: Date] = [:]
     private var started = false
     private var isMutating = false
+    private var inspectedConnections: Set<String> = []
 
     var isDemo: Bool { connections.isEmpty && showExamples }
     var displayedConnections: [ProjectConnection] { isDemo ? DemoData.projects : connections }
@@ -89,13 +90,16 @@ final class AppStore: ObservableObject {
         }
     }
 
-    private func refresh(_ connection: ProjectConnection) async {
+    private func refresh(_ candidate: ProjectConnection) async {
+        var connection = candidate
         guard connection.enabled, connections.contains(connection), !refreshing.contains(connection.id), let storage else { return }
         refreshing.insert(connection.id)
         lastAttempts[connection.id] = Date()
         defer { refreshing.remove(connection.id) }
         do {
             let secret = try credentials.load(for: connection.id)
+            connection = await inspectAutomaticStats(connection, secret: secret)
+            guard connections.contains(connection) else { return }
             let snapshot = try await collect(connection, secret: secret)
             // A removed or edited connection cannot be overwritten by a late response.
             guard connections.contains(connection) else { return }
@@ -129,6 +133,39 @@ final class AppStore: ObservableObject {
         }
     }
 
+    private func inspectionKey(_ connection: ProjectConnection) -> String { connection.id.uuidString + connection.credentialVersion.uuidString + connection.endpoint + connection.query }
+
+    private func inspectAutomaticStats(_ connection: ProjectConnection, secret: String?) async -> ProjectConnection {
+        guard connection.kind == .postgres, connection.autoStats == nil,
+              inspectedConnections.insert(inspectionKey(connection)).inserted else { return connection }
+        var completed = false
+        defer {
+            // Edits or a temporary failure during an await should allow the
+            // current source to be inspected again on its next refresh.
+            if !completed { inspectedConnections.remove(inspectionKey(connection)) }
+        }
+        do {
+            let connector = PostgresConnector()
+            let available = try await connector.discoverTables(connection: connection, secret: secret)
+            guard connections.contains(connection) else { return connection }
+            let selected = PostgresConnector.inferredSourceTables(connection: connection, available: available)
+            guard !selected.isEmpty else { completed = true; return connection }
+            let relationships = try await connector.discoverRelationships(connection: connection, secret: secret, tables: available)
+            guard !isMutating, connections.contains(connection), let storage,
+                  let index = connections.firstIndex(of: connection) else { return connection }
+            let upgraded = PostgresConnector.configureAnalytics(base: connection, tables: selected, relationships: relationships)
+            guard upgraded != connection else { completed = true; return connection }
+            isMutating = true
+            defer { isMutating = false }
+            var updated = connections
+            updated[index] = upgraded
+            try await storage.saveConnections(updated)
+            connections = updated
+            completed = true
+            return upgraded
+        } catch { return connection }
+    }
+
     func save(_ candidate: ProjectConnection, secret: String) async throws {
         guard !isMutating else { throw PulseError.storage("Another connection is being updated. Try again in a moment.") }
         isMutating = true
@@ -138,6 +175,13 @@ final class AppStore: ObservableObject {
         try ConnectorValidation.validate(connection)
         let previous = try credentials.load(for: connection.id)
         if (previous ?? "") != secret { connection.credentialVersion = UUID() }
+        var needsInspection = false
+        if let old = connections.first(where: { $0.id == connection.id }),
+           old.endpoint != connection.endpoint || old.query != connection.query || old.credentialVersion != connection.credentialVersion {
+            connection.autoStats = nil
+            needsInspection = true
+            if old.endpoint != connection.endpoint || old.query != connection.query { connection.sourceTables = nil }
+        }
         if secret.isEmpty { try credentials.delete(for: connection.id) }
         else { try credentials.save(secret: secret, for: connection.id) }
         var updated = connections
@@ -150,6 +194,8 @@ final class AppStore: ObservableObject {
             throw error
         }
         connections = updated
+        if needsInspection { inspectedConnections.remove(inspectionKey(connection)) }
+        else if connection.sourceTables != nil { inspectedConnections.insert(inspectionKey(connection)) }
         // Storage resets caches and event baselines when the source or credential changes.
         snapshots = Dictionary(uniqueKeysWithValues: try await storage.loadSnapshots().map { ($0.projectID, $0) })
         await loadEvents()

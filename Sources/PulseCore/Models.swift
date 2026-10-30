@@ -27,8 +27,10 @@ public struct ProjectConnection: Codable, Identifiable, Equatable, Sendable {
     public var notificationsEnabled: Bool
     public var enabled: Bool
     public var link: String
-    public init(id: UUID = UUID(), name: String, symbol: String = "square.stack.3d.up", kind: ConnectorKind = .http, endpoint: String = "", query: String = "", authHeader: String = "Authorization", credentialVersion: UUID = UUID(), metrics: [MetricDefinition] = [], intervalSeconds: Int = 300, notificationsEnabled: Bool = false, enabled: Bool = true, link: String = "") {
-        self.id = id; self.name = name; self.symbol = symbol; self.kind = kind; self.endpoint = endpoint; self.query = query; self.authHeader = authHeader; self.credentialVersion = credentialVersion; self.metrics = metrics; self.intervalSeconds = intervalSeconds; self.notificationsEnabled = notificationsEnabled; self.enabled = enabled; self.link = link
+    public var autoStats: DatabaseAnalyticsPlan?
+    public var sourceTables: [DatabaseTable]?
+    public init(id: UUID = UUID(), name: String, symbol: String = "square.stack.3d.up", kind: ConnectorKind = .http, endpoint: String = "", query: String = "", authHeader: String = "Authorization", credentialVersion: UUID = UUID(), metrics: [MetricDefinition] = [], intervalSeconds: Int = 300, notificationsEnabled: Bool = false, enabled: Bool = true, link: String = "", autoStats: DatabaseAnalyticsPlan? = nil, sourceTables: [DatabaseTable]? = nil) {
+        self.id = id; self.name = name; self.symbol = symbol; self.kind = kind; self.endpoint = endpoint; self.query = query; self.authHeader = authHeader; self.credentialVersion = credentialVersion; self.metrics = metrics; self.intervalSeconds = intervalSeconds; self.notificationsEnabled = notificationsEnabled; self.enabled = enabled; self.link = link; self.autoStats = autoStats; self.sourceTables = sourceTables
     }
 }
 
@@ -54,8 +56,10 @@ public struct ProjectSnapshot: Codable, Equatable, Sendable {
     public var measuredAt: Date
     public var fetchedAt: Date
     public var coverage: String?
-    public init(projectID: UUID, metrics: [MetricValue], events: [PulseEvent] = [], measuredAt: Date = Date(), fetchedAt: Date = Date(), coverage: String? = nil) {
-        self.projectID = projectID; self.metrics = metrics; self.events = events; self.measuredAt = measuredAt; self.fetchedAt = fetchedAt; self.coverage = coverage
+    public var details: [MetricValue]?
+    public var breakdowns: [MetricBreakdown]?
+    public init(projectID: UUID, metrics: [MetricValue], events: [PulseEvent] = [], measuredAt: Date = Date(), fetchedAt: Date = Date(), coverage: String? = nil, details: [MetricValue]? = nil, breakdowns: [MetricBreakdown]? = nil) {
+        self.projectID = projectID; self.metrics = metrics; self.events = events; self.measuredAt = measuredAt; self.fetchedAt = fetchedAt; self.coverage = coverage; self.details = details; self.breakdowns = breakdowns
     }
 }
 
@@ -74,13 +78,17 @@ public enum PulseError: LocalizedError, Equatable, Sendable {
 
 public enum DemoData {
     public static let projects: [ProjectConnection] = [
-        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, name: "Elysium", symbol: "calendar", metrics: [MetricDefinition(label: "businesses", path: "businesses"), MetricDefinition(label: "bookings · 7d", path: "bookings")]),
-        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, name: "Sidequest", symbol: "gamecontroller", metrics: [MetricDefinition(label: "players · 7d", path: "players"), MetricDefinition(label: "games · 7d", path: "games")]),
-        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, name: "Gair Rhydd", symbol: "newspaper", metrics: [MetricDefinition(label: "readers · 7d", path: "readers"), MetricDefinition(label: "signed in · 7d", path: "signedIn")])
+        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, name: "Elysium", symbol: "calendar", metrics: [MetricDefinition(label: "businesses", path: "businesses"), MetricDefinition(label: "bookings · 7d", path: "bookings")], link: "https://supabase.com/dashboard"),
+        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, name: "Sidequest", symbol: "gamecontroller", metrics: [MetricDefinition(label: "players · 7d", path: "players"), MetricDefinition(label: "games · 7d", path: "games")], link: "https://console.neon.tech/"),
+        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, name: "Gair Rhydd", symbol: "newspaper", metrics: [MetricDefinition(label: "readers · 7d", path: "readers"), MetricDefinition(label: "signed in · 7d", path: "signedIn")], link: "https://supabase.com/dashboard")
     ]
     public static func snapshots(now: Date = Date()) -> [ProjectSnapshot] {
-        zip(projects, [["12", "38"], ["46", "15"], ["210", "64"]]).map { project, values in
-            ProjectSnapshot(projectID: project.id, metrics: zip(project.metrics, values).map { MetricValue(id: $0.id, label: $0.label, value: $1) }, measuredAt: now, fetchedAt: now, coverage: "Example data")
+        zip(projects, [["12", "38"], ["46", "15"], ["210", "64"]]).enumerated().map { index, pair in
+            let (project, values) = pair
+            let extra = [[("Active · 7d", "5"), ("Bookings / business · 7d", "3.2")], [("Players today", "18"), ("Returning · 7d", "12")], [("Reads · 7d", "890"), ("Accounts", "126")]][index]
+            let details = extra.enumerated().map { offset, item in MetricValue(id: MetricIdentity.uuid(projectID: project.id, path: "demo.\(offset)"), label: item.0, value: item.1) }
+            let breakdowns = index == 0 ? [MetricBreakdown(id: "demo-bookings", title: "Bookings by business · 7d", rows: [("Oak Studio", "12"), ("Maple & Co", "9"), ("Cedar Rooms", "8"), ("Juniper", "6"), ("Birch Studio", "3")].enumerated().map { MetricBreakdownRow(id: "demo-\($0.offset)", label: $0.element.0, value: $0.element.1) })] : []
+            return ProjectSnapshot(projectID: project.id, metrics: zip(project.metrics, values).map { MetricValue(id: $0.id, label: $0.label, value: $1) }, measuredAt: now, fetchedAt: now, coverage: "Example data", details: details, breakdowns: breakdowns)
         }
     }
 }

@@ -8,7 +8,7 @@ public struct DiscoveredMetric: Identifiable, Equatable, Sendable {
     public init(path: String, label: String, previewValue: String) { self.path = path; self.label = label; self.previewValue = previewValue }
 }
 
-public struct DatabaseTable: Identifiable, Equatable, Sendable {
+public struct DatabaseTable: Codable, Identifiable, Equatable, Sendable {
     public var id: String { "\(schema.utf8.count):\(schema)\(name)" }
     public let schema: String
     public let name: String
