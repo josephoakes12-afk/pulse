@@ -9,6 +9,10 @@ struct PulsePanel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        IntegralPanelLayout { panelContent }.background(.regularMaterial)
+    }
+
+    private var panelContent: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "waveform.path.ecg").font(.system(size: 17, weight: .medium)).foregroundStyle(.tint)
@@ -46,7 +50,7 @@ struct PulsePanel: View {
                 } label: { Image(systemName: "gearshape").font(.system(size: 12)) }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Pulse settings").accessibilityLabel("Pulse settings")
             }.padding(.horizontal, 20).padding(.vertical, 13)
-        }.frame(width: 364).fixedSize(horizontal: false, vertical: true).background(.regularMaterial)
+        }.frame(width: 364).fixedSize(horizontal: false, vertical: true)
     }
 
     private var projectList: some View {
@@ -83,7 +87,7 @@ struct PulsePanel: View {
                         else if let snapshot, !store.isDemo, Date().timeIntervalSince(snapshot.measuredAt) > Double(project.intervalSeconds * 3) { Image(systemName: "clock").font(.system(size: 11)).foregroundStyle(.orange).help("Data is older than expected") }
                         if hasDetails {
                             Button {
-                                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.16)) { expanded = expanded == project.id ? nil : project.id }
+                                withAnimation(reduceMotion ? nil : DrawerMotion.reveal) { expanded = expanded == project.id ? nil : project.id }
                             } label: {
                                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
                                     .rotationEffect(.degrees(expanded == project.id ? 90 : 0)).frame(width: 18, height: 18).contentShape(Rectangle())
@@ -100,13 +104,10 @@ struct PulsePanel: View {
                 }
             }.padding(.horizontal, 20).padding(.vertical, 16)
 
-            if expanded == project.id && hasDetails {
-                let estimatedHeight = CGFloat((details.count + 1) / 2 * 42 + breakdowns.reduce(0) { $0 + 26 + $1.rows.count * 20 } + 10)
-                Group {
-                    if estimatedHeight > 240 {
-                        ScrollView { drawer(details: details, breakdowns: breakdowns) }.scrollBounceBehavior(.basedOnSize).frame(height: 240)
-                    } else { drawer(details: details, breakdowns: breakdowns) }
-                }.padding(.leading, 65).padding(.trailing, 20).padding(.bottom, 16)
+            if hasDetails {
+                DrawerReveal(isExpanded: expanded == project.id) {
+                    drawer(details: details, breakdowns: breakdowns)
+                }.padding(.leading, 65).padding(.trailing, 20)
             }
         }
     }
@@ -128,6 +129,7 @@ struct PulsePanel: View {
     private func metricCell(_ metric: MetricValue, large: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(metric.value).font(.system(size: large ? 22 : 17, weight: .medium, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
+                .contentTransition(.numericText()).animation(reduceMotion ? nil : DrawerMotion.numbers, value: metric.value)
             Text(metric.label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(metric.label)
         }.accessibilityElement(children: .combine)
     }
@@ -135,8 +137,16 @@ struct PulsePanel: View {
     private func drawer(details: [MetricValue], breakdowns: [MetricBreakdown]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             if !details.isEmpty {
-                LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 12) {
-                    ForEach(details.prefix(6)) { metricCell($0, large: false).frame(maxWidth: .infinity, alignment: .leading) }
+                let metrics = Array(details.prefix(6))
+                VStack(spacing: 12) {
+                    ForEach(Array(stride(from: 0, to: metrics.count, by: 2)), id: \.self) { index in
+                        HStack(alignment: .top, spacing: 16) {
+                            metricCell(metrics[index], large: false).frame(maxWidth: .infinity, alignment: .leading)
+                            if index + 1 < metrics.count {
+                                metricCell(metrics[index + 1], large: false).frame(maxWidth: .infinity, alignment: .leading)
+                            } else { Color.clear.frame(maxWidth: .infinity, maxHeight: 0) }
+                        }
+                    }
                 }
             }
             ForEach(breakdowns.prefix(2)) { breakdown in
@@ -147,6 +157,7 @@ struct PulsePanel: View {
                             Text(row.label).lineLimit(1).help(row.label)
                             Spacer(minLength: 12)
                             Text(row.value).monospacedDigit().foregroundStyle(.secondary).lineLimit(1).help(row.value)
+                                .contentTransition(.numericText()).animation(reduceMotion ? nil : DrawerMotion.numbers, value: row.value)
                         }.font(.system(size: 11)).accessibilityElement(children: .combine)
                     }
                 }

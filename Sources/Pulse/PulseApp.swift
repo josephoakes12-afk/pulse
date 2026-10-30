@@ -32,6 +32,9 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
         }
         statusItem = item
         popover.behavior = .transient
+        // SwiftUI supplies each intermediate content height. AppKit must not
+        // start a second resize animation for every one of those frames.
+        popover.animates = false
         if ProcessInfo.processInfo.arguments.contains("--light") { popover.appearance = NSAppearance(named: .aqua) }
         if ProcessInfo.processInfo.arguments.contains("--dark") { popover.appearance = NSAppearance(named: .darkAqua) }
         let controller = NSHostingController(rootView: PulsePanel(store: .shared))
@@ -137,7 +140,13 @@ enum AppWindows {
     static func showPreview(store: AppStore) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 364, height: 680), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Pulse"
-        window.contentView = NSHostingView(rootView: PulsePanel(store: store))
+        let host = NSHostingView(rootView: PulsePanel(store: store)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(.regularMaterial))
+        // The review window is fixed. Keep its header anchored while the
+        // compact panel changes size inside it.
+        host.sizingOptions = []
+        window.contentView = host
         window.isReleasedWhenClosed = false
         window.center()
         preview = window
