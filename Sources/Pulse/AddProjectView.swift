@@ -15,6 +15,7 @@ struct AddProjectView: View {
     @State private var projectName = ""
     @State private var iconSymbol = "square.stack.3d.up"
     @State private var iconImageData: Data?
+    @State private var iconWasChosen = false
     @State private var candidates: [DiscoveredMetric] = []
     @State private var selection: Set<String> = []
     @State private var tables: [DatabaseTable] = []
@@ -38,7 +39,7 @@ struct AddProjectView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 ConnectionIconButton(symbol: iconSymbol, imageData: iconImageData, size: 42) { symbol, imageData in
-                    iconSymbol = symbol; iconImageData = imageData
+                    iconSymbol = symbol; iconImageData = imageData; iconWasChosen = true
                 }.accessibilityLabel("Choose project icon").disabled(busy || saving)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.system(size: 18, weight: .semibold))
@@ -112,12 +113,13 @@ struct AddProjectView: View {
                 Picker("Source", selection: $kind) {
                     Text("API / JSON").tag(ConnectorKind.http)
                     Text("PostgreSQL").tag(ConnectorKind.postgres)
+                    Text("Supabase").tag(ConnectorKind.supabase)
                 }.pickerStyle(.segmented).labelsHidden()
                 HStack {
-                    if kind == .http {
-                        TextField("URL", text: $address, prompt: Text("https://example.com/api/summary")).focused($focused, equals: .address)
-                    } else {
+                    if kind == .postgres {
                         SecureField("Connection string", text: $address, prompt: Text("postgresql://user:password@host/database")).focused($focused, equals: .address)
+                    } else {
+                        TextField("URL", text: $address, prompt: Text(kind == .supabase ? "https://project.supabase.co/rest/v1" : "https://example.com/api/summary")).focused($focused, equals: .address)
                     }
                     Button { pasteAddress() } label: { Image(systemName: "doc.on.clipboard") }
                         .buttonStyle(.borderless).help("Paste a connection URL").accessibilityLabel("Paste connection URL")
@@ -126,11 +128,13 @@ struct AddProjectView: View {
                     Picker("Authentication", selection: $auth) { ForEach(Authentication.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     if auth == .header { TextField("Header", text: $header) }
                     if auth != .none { SecureField(auth == .bearer ? "Token (optional)" : "API key", text: $secret).focused($focused, equals: .secret) }
-                } else {
+                } else if kind == .postgres {
                     SecureField("Password", text: $secret, prompt: Text("Or include it in the connection string")).focused($focused, equals: .secret)
+                } else {
+                    SecureField("Access token / API key", text: $secret).focused($focused, equals: .secret)
                 }
             } footer: {
-                Text(kind == .http ? "Use an API that returns summary numbers. Leave the token blank for a public endpoint." : "Use the connection string from your database provider and a read-only account.")
+                Text(kind == .http ? "Use an API that returns summary numbers. Leave the token blank for a public endpoint." : kind == .postgres ? "Use the connection string from your database provider and a read-only account." : "Import a setup for your project’s counts.")
             }
             if let imported {
                 Section { Label("Setup loaded: \(imported.name)", systemImage: "doc.badge.checkmark").font(.callout) }
@@ -185,21 +189,27 @@ struct AddProjectView: View {
         busy = true; error = nil
         defer { busy = false }
         do {
+            let importedSetup = imported
+            let selectedKind = importedSetup?.kind ?? kind
             let parsed = try ProjectSetup.parseAddress(address)
+            if selectedKind == .supabase && parsed.kind != .http {
+                throw PulseError.invalidConfiguration("Use an HTTPS Supabase URL.")
+            }
             let effectiveSecret = parsed.secret ?? secret
             address = parsed.endpoint
-            kind = parsed.kind
+            kind = selectedKind == .supabase ? .supabase : parsed.kind
             secret = effectiveSecret
-            if projectName.isEmpty { projectName = imported?.name ?? parsed.suggestedName }
-            var base = imported ?? ProjectConnection(name: projectName, kind: kind, endpoint: parsed.endpoint)
+            if projectName.isEmpty { projectName = importedSetup?.name ?? parsed.suggestedName }
+            var base = importedSetup ?? ProjectConnection(name: projectName, kind: kind, endpoint: parsed.endpoint)
             base.name = projectName
+            base.kind = kind
             base.symbol = iconSymbol; base.iconImageData = iconImageData
             base.endpoint = parsed.endpoint
             base.authHeader = auth == .header ? header.trimmingCharacters(in: .whitespacesAndNewlines) : "Authorization"
-            if let imported, !imported.metrics.isEmpty {
+            if let importedSetup, !importedSetup.metrics.isEmpty {
                 let snapshot = try await store.collect(base, secret: credential)
                 try Task.checkCancellation()
-                candidates = zip(imported.metrics, snapshot.metrics).map { DiscoveredMetric(path: $0.path, label: $0.label, previewValue: $1.value) }
+                candidates = zip(importedSetup.metrics, snapshot.metrics).map { DiscoveredMetric(path: $0.path, label: $0.label, previewValue: $1.value) }
                 selection = Set(candidates.map(\.id))
                 connected = base; step = .numbers
             } else if kind == .http {
@@ -208,6 +218,8 @@ struct AddProjectView: View {
                 candidates = discovered
                 selection = Set(discovered.prefix(2).map(\.id))
                 connected = base; step = .numbers
+            } else if kind == .supabase {
+                throw PulseError.invalidConfiguration("Import a Supabase setup, or use Advanced Setup.")
             } else {
                 let discovered = try await PostgresConnector().discoverTables(connection: base, secret: effectiveSecret.isEmpty ? nil : effectiveSecret)
                 try Task.checkCancellation()
@@ -268,7 +280,7 @@ struct AddProjectView: View {
 
     private var credential: String? {
         guard !secret.isEmpty else { return nil }
-        if kind == .postgres || auth == .header { return secret }
+        if kind == .postgres || kind == .supabase || auth == .header { return secret }
         if auth == .none { return nil }
         return secret.lowercased().hasPrefix("bearer ") ? secret : "Bearer \(secret)"
     }
@@ -284,7 +296,8 @@ struct AddProjectView: View {
         guard let value = NSPasteboard.general.string(forType: .string) else { return }
         do {
             let parsed = try ProjectSetup.parseAddress(value)
-            kind = parsed.kind; address = parsed.endpoint
+            kind = kind == .supabase && parsed.kind == .http ? .supabase : parsed.kind
+            address = parsed.endpoint
             if let password = parsed.secret { secret = password }
         } catch { self.error = error.localizedDescription }
     }
@@ -301,8 +314,11 @@ struct AddProjectView: View {
                 let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 guard size <= 65_536 else { throw PulseError.invalidConfiguration("Choose a setup file smaller than 64 KB.") }
                 let preset = try ProjectPreset.decode(Data(contentsOf: url))
-                kind = preset.kind; address = preset.endpoint; secret = ""; projectName = preset.name
-                iconSymbol = preset.symbol; iconImageData = preset.iconImageData
+                let sameEndpoint = address.trimmingCharacters(in: .whitespacesAndNewlines) == preset.endpoint
+                let existingSecret = sameEndpoint ? secret : ""
+                let existingName = sameEndpoint && !projectName.isEmpty ? projectName : preset.name
+                kind = preset.kind; address = preset.endpoint; secret = existingSecret; projectName = existingName
+                if !iconWasChosen { iconSymbol = preset.symbol; iconImageData = preset.iconImageData }
                 auth = preset.authHeader.lowercased() == "authorization" ? .bearer : .header
                 header = preset.authHeader
                 imported = preset

@@ -23,6 +23,17 @@ struct PulsePanel: View {
                 Text("Pulse").font(.system(size: 16, weight: .semibold))
                 Spacer()
                 if store.isDemo { Text("DEMO").font(.system(size: 9, weight: .semibold, design: .rounded)).tracking(0.6).padding(.horizontal, 7).padding(.vertical, 4).background(.quaternary, in: Capsule()).foregroundStyle(.secondary).accessibilityLabel("Example data") }
+                Menu {
+                    ForEach(MetricTimeRange.allCases, id: \.self) { range in
+                        Button {
+                            withAnimation(reduceMotion ? nil : DrawerMotion.reveal) { store.selectRange(range) }
+                        } label: {
+                            if range == store.selectedRange { Label(range.title, systemImage: "checkmark") }
+                            else { Text(range.title) }
+                        }
+                    }
+                } label: { Text(store.selectedRange.shortTitle).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary) }
+                .menuStyle(.borderlessButton).fixedSize().help("Time range").accessibilityLabel("Time range: \(store.selectedRange.title)")
                 Button { AppWindows.showAddProject(store: store) } label: { Image(systemName: "plus").frame(width: 14, height: 14) }
                     .buttonStyle(.borderless).help("Add Project").accessibilityLabel("Add Project").keyboardShortcut("n")
                 if store.isRefreshing { ProgressView().controlSize(.mini).frame(width: 14, height: 14).accessibilityLabel("Updating") }
@@ -75,9 +86,12 @@ struct PulsePanel: View {
 
     private func projectRow(_ project: ProjectConnection) -> some View {
         let snapshot = store.snapshot(for: project.id)
-        let details = snapshot?.details ?? []
-        let breakdowns = snapshot?.breakdowns ?? []
-        let hasDetails = !details.isEmpty || !breakdowns.isEmpty
+        let rawSnapshot = store.rawSnapshot(for: project.id)
+        let drawerSnapshot = snapshot ?? rawSnapshot
+        let details = drawerSnapshot?.details ?? []
+        let breakdowns = drawerSnapshot?.breakdowns ?? []
+        let hasDrawer = !details.isEmpty || !breakdowns.isEmpty
+        let hasDetails = snapshot != nil && hasDrawer
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 ConnectionIconButton(symbol: project.symbol, imageData: project.iconImageData) { symbol, imageData in
@@ -93,6 +107,9 @@ struct PulsePanel: View {
                         if !project.enabled { Image(systemName: "pause.circle").font(.system(size: 11)).foregroundStyle(.secondary).help("Paused") }
                         else if let error = store.errors[project.id] { Image(systemName: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(.orange).help(error).accessibilityLabel("Connection needs attention") }
                         else if let snapshot, !store.isDemo, Date().timeIntervalSince(snapshot.measuredAt) > Double(project.intervalSeconds * 3) { Image(systemName: "clock").font(.system(size: 11)).foregroundStyle(.orange).help("Data is older than expected") }
+                        else if let coverage = snapshot?.coverage ?? rawSnapshot?.coverage, !store.isDemo {
+                            Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary).help(coverage).accessibilityLabel(coverage)
+                        }
                         if hasDetails {
                             Button {
                                 withAnimation(reduceMotion ? nil : DrawerMotion.reveal) { expanded = expanded == project.id ? nil : project.id }
@@ -108,12 +125,13 @@ struct PulsePanel: View {
                         }
                     } else {
                         Text(project.enabled ? "—" : "Paused").font(.system(size: 20, weight: .medium)).foregroundStyle(.secondary)
+                            .help(rawSnapshot == nil ? "Waiting for data" : "\(store.selectedRange.title) is not available for this connection. \(rawSnapshot?.coverage ?? "")")
                     }
                 }
             }.padding(.horizontal, 20).padding(.vertical, 16)
 
-            if hasDetails {
-                DrawerReveal(isExpanded: expanded == project.id) {
+            if hasDrawer {
+                DrawerReveal(isExpanded: expanded == project.id && hasDetails) {
                     drawer(details: details, breakdowns: breakdowns)
                 }.padding(.leading, 65).padding(.trailing, 20)
             }

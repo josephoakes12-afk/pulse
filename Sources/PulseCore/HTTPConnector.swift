@@ -62,7 +62,8 @@ public struct HTTPConnector: SummaryConnector {
         let object = try summaryObject(data)
         let values = try connection.metrics.map { definition in
             let value = try scalar(at: definition.path, in: object)
-            return MetricValue(id: definition.id, label: definition.label, value: value)
+            let label = cleanText((object["labels"] as? [String: String])?[definition.path], limit: 40) ?? definition.label
+            return MetricValue(id: definition.id, label: label, value: value)
         }
         var measuredAt = now
         if let rawDate = object["measuredAt"] ?? object["measured_at"] ?? object["measuredat"] {
@@ -89,7 +90,63 @@ public struct HTTPConnector: SummaryConnector {
         }
         let details = expandedMetrics(in: object, connection: connection)
         let breakdowns = expandedBreakdowns(in: object, projectID: connection.id)
-        return ProjectSnapshot(projectID: connection.id, metrics: values, events: events.sorted { $0.occurredAt < $1.occurredAt }, measuredAt: measuredAt, fetchedAt: now, coverage: coverage, details: details.isEmpty ? nil : details, breakdowns: breakdowns.isEmpty ? nil : breakdowns)
+        let ranges = rangeSnapshots(in: object, connection: connection)
+        let alerts = alertObservations(in: object)
+        return ProjectSnapshot(projectID: connection.id, metrics: values, events: events.sorted { $0.occurredAt < $1.occurredAt }, measuredAt: measuredAt, fetchedAt: now, coverage: coverage, details: details.isEmpty ? nil : details, breakdowns: breakdowns.isEmpty ? nil : breakdowns, ranges: ranges, alertObservations: alerts)
+    }
+
+    private static func rangeSnapshots(in object: [String: Any], connection: ProjectConnection) -> [String: MetricRangeSnapshot]? {
+        guard object["ranges"] != nil else { return nil }
+        guard let raw = object["ranges"] as? [String: Any] else { return [:] }
+        var result: [String: MetricRangeSnapshot] = [:]
+        guard (1...3).contains(connection.metrics.count) else { return result }
+        for range in MetricTimeRange.allCases {
+            guard let fields = raw[range.rawValue] as? [String: Any] else { continue }
+            var rangeConnection = connection
+            let labels = fields["labels"] as? [String: Any] ?? [:]
+            rangeConnection.metrics = connection.metrics.map { definition in
+                var metric = definition
+                if let label = cleanText(labels[definition.path], limit: 40) { metric.label = label }
+                return metric
+            }
+            // An invalid optional range cannot hide otherwise valid headline data.
+            guard let metrics = try? rangeConnection.metrics.map({ definition in
+                MetricValue(id: definition.id, label: definition.label, value: try scalar(at: definition.path, in: fields))
+            }) else { continue }
+            let details = expandedMetrics(in: fields, connection: rangeConnection)
+            let breakdowns = expandedBreakdowns(in: fields, projectID: connection.id)
+            result[range.rawValue] = MetricRangeSnapshot(metrics: metrics, coverage: cleanText(fields["coverage"], limit: 160),
+                                                       details: details.isEmpty ? nil : details, breakdowns: breakdowns.isEmpty ? nil : breakdowns)
+        }
+        return result
+    }
+
+    private static func alertObservations(in object: [String: Any]) -> AlertObservations? {
+        guard let raw = object["alerts"] as? [String: Any] else { return nil }
+        var counters: [CounterAlertObservation] = []
+        var daily: [DailyAlertObservation] = []
+        var counterIDs: Set<String> = [], dailyIDs: Set<String> = []
+        for row in (raw["counters"] as? [[String: Any]] ?? []).prefix(12) {
+            guard let id = cleanText(row["id"], limit: 128), let label = cleanText(row["label"], limit: 80),
+                  let value = nonnegativeInteger(row["value"]), counterIDs.insert(id).inserted else { continue }
+            let singular = cleanText(row["unitSingular"], limit: 80) ?? label.lowercased()
+            let plural = cleanText(row["unitPlural"], limit: 80) ?? label.lowercased()
+            counters.append(CounterAlertObservation(id: id, label: label, value: value, unitSingular: singular, unitPlural: plural))
+        }
+        for row in (raw["daily"] as? [[String: Any]] ?? []).prefix(12) {
+            guard let id = cleanText(row["id"], limit: 128), let label = cleanText(row["label"], limit: 80),
+                  let today = nonnegativeInteger(row["today"]), let yesterday = nonnegativeInteger(row["yesterday"]),
+                  let day = cleanText(row["day"], limit: 10), NativeAlertEvaluator.isCalendarDay(day), dailyIDs.insert(id).inserted else { continue }
+            daily.append(DailyAlertObservation(id: id, label: label, today: today, yesterday: yesterday, day: day))
+        }
+        return AlertObservations(counters: counters, daily: daily)
+    }
+
+    private static func nonnegativeInteger(_ value: Any?) -> Int64? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite, number.doubleValue >= 0, number.doubleValue <= 9_007_199_254_740_991,
+              number.doubleValue.rounded(.towardZero) == number.doubleValue else { return nil }
+        return number.int64Value
     }
 
     public static func discover(data: Data) throws -> [DiscoveredMetric] {
@@ -255,7 +312,7 @@ public struct HTTPConnector: SummaryConnector {
         let compact = words.joined()
         let privateWords: Set<String> = ["id", "ids", "uuid", "email", "phone", "mobile", "password", "secret", "token", "key", "apikey", "credential", "credentials", "authorization", "signature", "address", "latitude", "longitude", "lat", "lng", "postcode", "zipcode", "dob"]
         if words.contains(where: privateWords.contains) { return true }
-        if ["key", "apikey", "accesskey", "privatekey", "publickey", "accountnumber", "phonenumber", "ip", "ipaddress", "events", "timestamp", "createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "date", "time", "details", "breakdowns", "pulsedetails", "pulsebreakdowns"].contains(compact) { return true }
+        if ["key", "apikey", "accesskey", "privatekey", "publickey", "accountnumber", "phonenumber", "ip", "ipaddress", "events", "timestamp", "createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "date", "time", "details", "breakdowns", "pulsedetails", "pulsebreakdowns", "ranges", "alerts"].contains(compact) { return true }
         return compact.hasSuffix("timestamp") || compact.hasSuffix("uuid") || compact.hasSuffix("datetime")
             || ["createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "lastseen", "lastactive", "lastlogin"].contains(where: compact.hasPrefix)
     }
@@ -297,7 +354,7 @@ public struct HTTPConnector: SummaryConnector {
         return url.absoluteString
     }
 
-    private static func fetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    static func fetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 20
@@ -329,13 +386,14 @@ public enum ConnectorValidation {
         guard (60...86_400).contains(connection.intervalSeconds) else { throw PulseError.invalidConfiguration("Choose a refresh interval between one minute and one day.") }
         guard let parts = URLComponents(string: connection.endpoint), let host = parts.host, !host.isEmpty,
               parts.password == nil, parts.fragment == nil else { throw PulseError.invalidConfiguration("Enter a valid endpoint. Save credentials separately.") }
+        if connection.kind == .supabase { try SupabaseConnector.validate(connection); return }
         if connection.kind == .http {
             let scheme = parts.scheme?.lowercased()
             guard (scheme == "https" || (scheme == "http" && isLoopback(host))), parts.user == nil else { throw PulseError.invalidConfiguration("Use HTTPS, or HTTP on localhost. Save credentials separately.") }
             let secretKeys = ["key", "api_key", "apikey", "token", "access_token", "password", "secret", "authorization", "signature"]
             guard !(parts.queryItems ?? []).contains(where: { secretKeys.contains($0.name.lowercased()) }) else { throw PulseError.invalidConfiguration("Move the credential out of the URL and into the secure credential field.") }
             let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-            guard !connection.authHeader.isEmpty, connection.authHeader.unicodeScalars.allSatisfy(allowed.contains), !["host", "content-length", "connection", "cookie"].contains(connection.authHeader.lowercased()) else { throw PulseError.invalidConfiguration("Enter a valid authentication header name.") }
+            guard !connection.authHeader.isEmpty, connection.authHeader.unicodeScalars.allSatisfy({ allowed.contains($0) }), !["host", "content-length", "connection", "cookie"].contains(connection.authHeader.lowercased()) else { throw PulseError.invalidConfiguration("Enter a valid authentication header name.") }
         } else {
             guard ["postgres", "postgresql"].contains(parts.scheme?.lowercased() ?? ""), let user = parts.user, !user.isEmpty, parts.path.count > 1, (parts.port ?? 5432) > 0, (parts.port ?? 5432) <= 65535 else { throw PulseError.invalidConfiguration("Use postgresql://user@host:5432/database, with the password saved separately.") }
             let items = parts.queryItems ?? []

@@ -28,13 +28,13 @@ public enum ProjectPreset {
         guard preset.version == nil || preset.version == 1 else {
             throw PulseError.invalidConfiguration("This project file needs a different version of Pulse.")
         }
-        guard preset.kind == .postgres || (preset.query ?? "").isEmpty else {
+        guard preset.kind != .http || (preset.query ?? "").isEmpty else {
             throw PulseError.invalidConfiguration("Only database project files can include a query.")
         }
 
         let symbol = preset.symbol ?? "square.stack.3d.up"
         let allowedSymbolCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "."))
-        guard !symbol.isEmpty, symbol.count <= 80, symbol.unicodeScalars.allSatisfy(allowedSymbolCharacters.contains) else {
+        guard !symbol.isEmpty, symbol.count <= 80, symbol.unicodeScalars.allSatisfy({ allowedSymbolCharacters.contains($0) }) else {
             throw PulseError.invalidConfiguration("Choose a project file with a valid icon name.")
         }
         let link = (preset.link ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -83,7 +83,7 @@ public enum ProjectPreset {
     ]
 
     private static func normalizedKey(_ key: String) -> String {
-        String(key.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains))
+        String(key.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
     }
 
     private static func containsSecretKey(_ value: Any) -> Bool {

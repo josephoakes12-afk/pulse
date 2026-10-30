@@ -21,14 +21,15 @@ public actor LocalStore {
         try database.execute("PRAGMA secure_delete = ON")
         try database.execute("PRAGMA busy_timeout = 3000")
         let version = try database.rows("PRAGMA user_version").first?["user_version"]?.integer ?? 0
-        guard version <= 1 else { throw PulseError.storage("This cache was created by a newer version of Pulse.") }
+        guard version <= 2 else { throw PulseError.storage("This cache was created by a newer version of Pulse.") }
         try database.transaction {
             try database.execute("CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, position INTEGER NOT NULL, payload TEXT NOT NULL)")
             try database.execute("CREATE TABLE IF NOT EXISTS snapshots (project_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
             try database.execute("CREATE TABLE IF NOT EXISTS project_state (project_id TEXT PRIMARY KEY, initialized INTEGER NOT NULL DEFAULT 0, pruned_before REAL NOT NULL DEFAULT 0)")
             try database.execute("CREATE TABLE IF NOT EXISTS events (project_id TEXT NOT NULL, event_id TEXT NOT NULL, occurred_at REAL NOT NULL, payload TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (project_id, event_id))")
             try database.execute("CREATE INDEX IF NOT EXISTS events_recent ON events (project_id, occurred_at DESC)")
-            try database.execute("PRAGMA user_version = 1")
+            try database.execute("CREATE TABLE IF NOT EXISTS alert_state (project_id TEXT NOT NULL, observation_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (project_id, observation_key))")
+            try database.execute("PRAGMA user_version = 2")
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: databaseURL.path)
     }
@@ -124,8 +125,26 @@ public actor LocalStore {
             if !allowNotifications {
                 try database.execute("UPDATE events SET pending = 0 WHERE project_id = ?", [.text(project)])
             }
+            var collectionEvents = snapshot.events
+            if let observations = snapshot.alertObservations {
+                let oldRows = try database.rows("SELECT observation_key, payload FROM alert_state WHERE project_id = ?", [.text(project)])
+                var oldStates: [String: NativeAlertState] = [:]
+                for row in oldRows {
+                    if let key = row["observation_key"]?.text { oldStates[key] = try decode(NativeAlertState.self, row: row) }
+                }
+                let evaluation = NativeAlertEvaluator.evaluate(observations, previous: oldStates, initialized: initialized,
+                                                               enabled: allowNotifications, measuredAt: snapshot.measuredAt)
+                try database.execute("DELETE FROM alert_state WHERE project_id = ?", [.text(project)])
+                for (key, value) in evaluation.states {
+                    try database.execute("INSERT INTO alert_state (project_id, observation_key, payload) VALUES (?, ?, ?)",
+                                         [.text(project), .text(key), .text(try json(value))])
+                }
+                if let title = NativeAlertEvaluator.title(evaluation.messages) {
+                    collectionEvents.append(PulseEvent(id: "pulse:change:" + UUID().uuidString, title: title, occurredAt: snapshot.fetchedAt))
+                }
+            }
             let oldestAllowed = max(prunedBefore, snapshot.fetchedAt.timeIntervalSince1970 - Self.catchUpSeconds)
-            for event in snapshot.events where !event.id.isEmpty && !event.title.isEmpty {
+            for event in collectionEvents where !event.id.isEmpty && !event.title.isEmpty {
                 let timestamp = event.occurredAt.timeIntervalSince1970
                 let eligible = initialized && allowNotifications && timestamp > oldestAllowed
                     && timestamp <= snapshot.fetchedAt.timeIntervalSince1970 + 300
@@ -174,7 +193,7 @@ public actor LocalStore {
     }
 
     private func removeCachedProjectRows(_ id: String) throws {
-        for table in ["snapshots", "project_state", "events"] {
+        for table in ["snapshots", "project_state", "events", "alert_state"] {
             try database.execute("DELETE FROM \(table) WHERE project_id = ?", [.text(id)])
         }
     }

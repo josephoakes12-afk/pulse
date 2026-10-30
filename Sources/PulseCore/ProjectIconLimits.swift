@@ -10,7 +10,7 @@ public enum ProjectIconLimits {
     public static func validate(symbol: String, imageData: Data?) throws {
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.")
         guard !symbol.isEmpty, symbol.utf8.count <= maximumSymbolLength,
-              symbol.unicodeScalars.allSatisfy(allowed.contains) else {
+              symbol.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
             throw PulseError.invalidConfiguration("Choose a valid symbol for this connection.")
         }
         guard let imageData else { return }

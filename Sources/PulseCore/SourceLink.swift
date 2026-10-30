@@ -11,10 +11,15 @@ public enum SourceLink {
               source.password == nil, source.fragment == nil else { return nil }
         let scheme = source.scheme?.lowercased() ?? ""
         guard connection.kind == .postgres ? ["postgres", "postgresql"].contains(scheme) : ["http", "https"].contains(scheme) else { return nil }
-        if connection.kind == .http && source.user != nil { return nil }
+        if connection.kind != .postgres && source.user != nil { return nil }
 
         let components = host.split(separator: ".").map(String.init)
         var reference: String?
+        let path = source.path.split(separator: "/")
+        if connection.kind == .supabase, host == "api.supabase.com", path.count == 6,
+           path[0] == "v1", path[1] == "projects", path[3] == "database", path[4] == "query", path[5] == "read-only" {
+            reference = String(path[2])
+        }
         if components.count == 3, components[1] == "supabase", components[2] == "co" {
             reference = components[0]
         } else if components.count == 4, components[0] == "db", components[2] == "supabase", components[3] == "co" {

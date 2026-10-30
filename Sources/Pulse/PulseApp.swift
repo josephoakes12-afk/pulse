@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UserNotifications
 
 @main
 enum PulseApp {
@@ -12,7 +13,7 @@ enum PulseApp {
 }
 
 @MainActor
-final class PulseAppDelegate: NSObject, NSApplicationDelegate {
+final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var panelObserver: NSObjectProtocol?
@@ -20,6 +21,7 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         configureMenus()
+        UNUserNotificationCenter.current().delegate = self
         if ProcessInfo.processInfo.arguments.contains("--dark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
         if ProcessInfo.processInfo.arguments.contains("--light") { NSApp.appearance = NSAppearance(named: .aqua) }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -72,6 +74,17 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag && !popover.isShown { showPanel() }
         return false
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                           withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list, .sound])
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                           withCompletionHandler completionHandler: @escaping () -> Void) {
+        Task { @MainActor [weak self] in self?.showPanel() }
+        completionHandler()
     }
 
     @objc private func showConnections() { AppWindows.showConnections(store: .shared) }

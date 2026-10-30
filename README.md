@@ -1,8 +1,12 @@
 # Pulse
 
-A small, local macOS menu-bar app for the few project numbers you want to keep an eye on. Built with SwiftUI and AppKit, with generic HTTP/JSON and read-only PostgreSQL connectors.
+A small, local macOS menu-bar app for the few project numbers you want to keep an eye on. Built with SwiftUI and AppKit, with HTTP/JSON, PostgreSQL and Supabase connectors.
 
 Each project gets a compact row with up to three metrics. New source events can produce optional desktop notifications. Demo data is clearly labelled; connecting a service does not invent measurements that it does not already record.
+
+The small range menu switches between 24 hours, 7 days, 30 days and lifetime using cached summaries. Sources declare which periods they can measure; an unavailable period shows a dash with its coverage on hover. A legacy summary without range data supports lifetime only.
+
+Native alerts can report increases in declared counters and when today's activity exceeds the complete previous calendar day. The initial collection is quiet, range changes do not generate alerts, and local receipts suppress repeat deliveries. Enable alerts per connection and use **Test alert** in Connections to check macOS permission and delivery.
 
 Expand a row with its arrow to see available extra KPIs and grouped counts. Database grouping uses declared foreign keys; API grouping must be supplied by the source. The project name opens its dashboard or source in your default browser, with the destination available on hover. Supabase project links are inferred from recognized connection addresses; an explicit project link in Advanced takes priority.
 
@@ -68,6 +72,8 @@ See [examples/summary.json](examples/summary.json) for a complete response and [
 | `events` | Events with stable `id`, short `title`, ISO 8601 `occurredAt`, and optional `url` |
 | `details` | Optional extra KPIs, as an object or a list of labelled values |
 | `breakdowns` | Optional groups with `title` and `rows` containing `id`, `label` and `value` |
+| `ranges` | Optional `24h`, `7d`, `30d`, `lifetime` summaries with the same metric paths, optional path-to-label overrides and coverage |
+| `alerts` | Optional integer `counters` and calendar-day `daily` observations for native growth alerts |
 
 Additional numeric fields can become extra KPIs automatically. Pulse shows at most six extra KPIs, two groups and ten rows per group. It does not infer totals from arbitrary record arrays. Database groups use declared foreign keys and available display names; averages include visible parents with zero associated records, and unlinked records are counted separately. Missing or ambiguous relationships need explicit source mapping.
 
@@ -92,6 +98,10 @@ SELECT count(*) AS total FROM reporting.project_accounts
 ```
 
 Pulse applies a read-only transaction and a statement timeout. These limits complement the database role's permissions; use restricted credentials rather than an administrator account. A database row can also return `measuredAt`, `coverage` and a JSON `events` array using the same summary format as HTTP.
+
+### Supabase
+
+Use an imported setup or Advanced with either a project's Data API endpoint or Supabase's restricted read-only SQL endpoint. Data API plans issue bounded exact-count HEAD requests with at most three concurrent requests. SQL summaries use the read-only query route. Both keep their credentials in Keychain, reject redirects and return all supported time ranges in one refresh cycle. No schema or role changes are required by the connector.
 
 ## Local by design
 

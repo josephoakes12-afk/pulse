@@ -14,8 +14,10 @@ final class AppStore: ObservableObject {
     @Published private(set) var recentEvents: [UUID: [PulseEvent]] = [:]
     @Published var storageError: String?
     @Published var showExamples: Bool = true
+    @Published private(set) var selectedRange: MetricTimeRange = .last7Days
     @Published private var demoProjects = DemoData.projects
     private var storage: LocalStore?
+    private var viewStateURL: URL?
     private let credentials = CredentialStore()
     private var timer: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
@@ -38,6 +40,10 @@ final class AppStore: ObservableObject {
                 directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent(arguments.contains("--demo") ? "Pulse Demo" : "Pulse", isDirectory: true)
             }
             storage = try LocalStore(databaseURL: directory.appendingPathComponent("pulse.sqlite"))
+            viewStateURL = directory.appendingPathComponent("view-state.json")
+            if let viewStateURL, let data = try? Data(contentsOf: viewStateURL),
+               let saved = try? JSONDecoder().decode([String: String].self, from: data),
+               let range = saved["range"].flatMap(MetricTimeRange.init(rawValue:)) { selectedRange = range }
         } catch { storageError = "Pulse couldn’t open its local storage. \(error.localizedDescription)" }
     }
 
@@ -51,6 +57,7 @@ final class AppStore: ObservableObject {
         } catch { storageError = error.localizedDescription }
         if ProcessInfo.processInfo.arguments.contains("--empty") { showExamples = false }
         if ProcessInfo.processInfo.arguments.contains("--demo") { connections = []; snapshots = [:]; showExamples = true }
+        if connections.contains(where: \.notificationsEnabled) { Task { await requestNotificationAuthorization() } }
         // Every 30s, check which sources are due. Only due connections perform network work.
         timer = Task { [weak self] in
             await self?.refreshDue()
@@ -65,7 +72,20 @@ final class AppStore: ObservableObject {
     }
 
     func snapshot(for id: UUID) -> ProjectSnapshot? {
-        isDemo ? DemoData.snapshots().first(where: { $0.projectID == id }) : snapshots[id]
+        rawSnapshot(for: id)?.forRange(selectedRange)
+    }
+
+    func rawSnapshot(for id: UUID) -> ProjectSnapshot? {
+        isDemo ? DemoMetricRanges.snapshots().first(where: { $0.projectID == id }) : snapshots[id]
+    }
+
+    func selectRange(_ range: MetricTimeRange) {
+        selectedRange = range
+        guard let viewStateURL else { return }
+        do {
+            try JSONEncoder().encode(["range": range.rawValue]).write(to: viewStateURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: viewStateURL.path)
+        } catch { storageError = "The selected time range couldn’t be saved." }
     }
 
     func refreshDue() async {
@@ -88,6 +108,7 @@ final class AppStore: ObservableObject {
         switch connection.kind {
         case .http: return try await HTTPConnector().collect(connection: connection, secret: secret)
         case .postgres: return try await PostgresConnector().collect(connection: connection, secret: secret)
+        case .supabase: return try await SupabaseConnector().collect(connection: connection, secret: secret)
         }
     }
 
@@ -98,7 +119,14 @@ final class AppStore: ObservableObject {
         lastAttempts[connection.id] = Date()
         defer { refreshing.remove(connection.id) }
         do {
-            let secret = try credentials.load(for: connection.id)
+            let credentialStore = credentials
+            let projectID = connection.id
+            // macOS may wait for the user's Keychain approval. Keep that
+            // protected wait off the main actor so the panel stays responsive.
+            let secret = try await Task.detached(priority: .utility) {
+                try credentialStore.load(for: projectID)
+            }.value
+            guard isCurrent(connection) else { return }
             connection = await inspectAutomaticStats(connection, secret: secret)
             guard isCurrent(connection) else { return }
             let snapshot = try await collect(connection, secret: secret)
@@ -255,6 +283,21 @@ final class AppStore: ObservableObject {
     private func notificationAuthorization() async -> Bool {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         return settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional
+    }
+
+    private func requestNotificationAuthorization() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .notDetermined else { return }
+        _ = try? await center.requestAuthorization(options: [.alert, .sound])
+    }
+
+    func testNotification(for project: ProjectConnection) async throws {
+        await requestNotificationAuthorization()
+        guard await notificationAuthorization() else {
+            throw PulseError.response("Allow notifications for Pulse in System Settings to receive alerts.")
+        }
+        try await notify(PulseEvent(id: "test:\(UUID().uuidString)", title: "This is a test notification from Pulse.", occurredAt: Date()), project: project)
     }
 
     private func notify(_ event: PulseEvent, project: ProjectConnection) async throws {

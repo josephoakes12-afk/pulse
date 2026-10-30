@@ -53,6 +53,9 @@ struct ConnectionsView: View {
                             Button("Credentials…") { editor = EditorItem(connection: project, credentialsOnly: true) }
                             Button("Advanced…") { editor = EditorItem(connection: project) }
                             Button("Refresh") { Task { await store.refreshAll() } }.disabled(store.isRefreshing || !project.enabled)
+                            Button("Test alert") {
+                                Task { do { try await store.testNotification(for: project) } catch { self.error = error.localizedDescription } }
+                            }.disabled(!project.notificationsEnabled)
                         }
                     }
                     localDataSection
@@ -125,7 +128,7 @@ struct CredentialEditor: View {
                 Spacer()
             }.padding(20)
             Form {
-                SecureField(connection.kind == .postgres ? "Password" : bearer ? "Token" : "Header value", text: $secret)
+                SecureField(connection.kind == .postgres ? "Password" : connection.kind == .supabase ? "Access token / API key" : bearer ? "Token" : "Header value", text: $secret)
                 Text("Saved securely in Keychain. Leave blank to remove the credential.").font(.caption).foregroundStyle(.secondary)
             }.formStyle(.grouped).disabled(saving || !loaded)
             if let error { Text(error).foregroundStyle(.red).font(.callout).padding(.horizontal, 20).padding(.bottom, 12) }
@@ -202,13 +205,20 @@ struct ConnectionEditor: View {
                         TextField("URL", text: $draft.endpoint, prompt: Text("https://example.com/api/summary"))
                         TextField("Auth header", text: $draft.authHeader, prompt: Text("Authorization"))
                         SecureField("Header value", text: $secret, prompt: Text("Optional · e.g. Bearer token"))
-                    } else {
+                    } else if draft.kind == .postgres {
                         TextField("Database URL", text: $draft.endpoint, prompt: Text("postgresql://reader@host/database"))
                         SecureField("Password", text: $secret)
                         LabeledContent("Query") {
                             TextEditor(text: $draft.query).font(.system(.caption, design: .monospaced)).frame(minHeight: 74).padding(4).background(.background, in: RoundedRectangle(cornerRadius: 5)).overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
                         }
                         Text("Use a read-only database account and one SELECT returning a single summary row. Passwords belong in the field above.").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        TextField("URL", text: $draft.endpoint, prompt: Text("https://project.supabase.co/rest/v1"))
+                        SecureField("Access token / API key", text: $secret)
+                        LabeledContent("Query / count plan") {
+                            TextEditor(text: $draft.query).font(.system(.caption, design: .monospaced)).frame(minHeight: 74).padding(4).background(.background, in: RoundedRectangle(cornerRadius: 5)).overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
+                        }
+                        Text("Use the query or count plan from your project setup.").font(.caption).foregroundStyle(.secondary)
                     }
                 } header: { Text("Connection") } footer: {
                     if draft.kind == .http { Text("Read-only GET. Use HTTPS, or HTTP for a local source. The header value is stored in Keychain.") }
@@ -217,13 +227,13 @@ struct ConnectionEditor: View {
                     ForEach($draft.metrics) { $metric in
                         HStack(spacing: 8) {
                             TextField("Label", text: $metric.label).labelsHidden().accessibilityLabel("Metric label").frame(maxWidth: .infinity)
-                            TextField(draft.kind == .http ? "JSON path" : "Column", text: $metric.path).labelsHidden().font(.system(.body, design: .monospaced)).frame(maxWidth: .infinity)
+                            TextField(draft.kind == .postgres ? "Column" : "JSON path", text: $metric.path).labelsHidden().font(.system(.body, design: .monospaced)).frame(maxWidth: .infinity)
                             Button { draft.metrics.removeAll { $0.id == metric.id } } label: { Image(systemName: "minus.circle").foregroundStyle(.secondary) }.buttonStyle(.borderless).disabled(draft.metrics.count <= 1).accessibilityLabel("Remove \(metric.label) metric")
                         }
                     }
                     if draft.metrics.count < 3 { Button("Add a number") { draft.metrics.append(MetricDefinition(label: "", path: "")) }.buttonStyle(.link) }
                 } header: { Text("Numbers to show") } footer: {
-                    Text(draft.kind == .http ? "Choose up to three values. For example, metrics.users reads users inside the metrics object." : "Choose up to three columns from the returned row.")
+                    Text(draft.kind == .postgres ? "Choose up to three columns from the returned row." : "Choose up to three values. For example, metrics.users reads users inside the metrics object.")
                 }
                 Section {
                     Picker("Refresh", selection: $draft.intervalSeconds) {

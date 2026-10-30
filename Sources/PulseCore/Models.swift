@@ -1,8 +1,10 @@
 import Foundation
 
 public enum ConnectorKind: String, Codable, CaseIterable, Sendable {
-    case http, postgres
-    public var title: String { self == .http ? "HTTP / JSON" : "PostgreSQL" }
+    case http, postgres, supabase
+    public var title: String {
+        switch self { case .http: "HTTP / JSON"; case .postgres: "PostgreSQL"; case .supabase: "Supabase" }
+    }
 }
 
 public struct MetricDefinition: Codable, Identifiable, Equatable, Sendable {
@@ -69,8 +71,10 @@ public struct ProjectSnapshot: Codable, Equatable, Sendable {
     public var coverage: String?
     public var details: [MetricValue]?
     public var breakdowns: [MetricBreakdown]?
-    public init(projectID: UUID, metrics: [MetricValue], events: [PulseEvent] = [], measuredAt: Date = Date(), fetchedAt: Date = Date(), coverage: String? = nil, details: [MetricValue]? = nil, breakdowns: [MetricBreakdown]? = nil) {
-        self.projectID = projectID; self.metrics = metrics; self.events = events; self.measuredAt = measuredAt; self.fetchedAt = fetchedAt; self.coverage = coverage; self.details = details; self.breakdowns = breakdowns
+    public var ranges: [String: MetricRangeSnapshot]?
+    public var alertObservations: AlertObservations?
+    public init(projectID: UUID, metrics: [MetricValue], events: [PulseEvent] = [], measuredAt: Date = Date(), fetchedAt: Date = Date(), coverage: String? = nil, details: [MetricValue]? = nil, breakdowns: [MetricBreakdown]? = nil, ranges: [String: MetricRangeSnapshot]? = nil, alertObservations: AlertObservations? = nil) {
+        self.projectID = projectID; self.metrics = metrics; self.events = events; self.measuredAt = measuredAt; self.fetchedAt = fetchedAt; self.coverage = coverage; self.details = details; self.breakdowns = breakdowns; self.ranges = ranges; self.alertObservations = alertObservations
     }
 }
 
