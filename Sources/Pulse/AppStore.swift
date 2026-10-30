@@ -13,6 +13,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var refreshing: Set<UUID> = []
     @Published private(set) var recentEvents: [UUID: [PulseEvent]] = [:]
     @Published private(set) var metricVisibilities: [UUID: MetricVisibility] = [:]
+    @Published var widgetFocusProjectID: UUID?
     @Published var storageError: String?
     @Published var showExamples: Bool = true
     @Published private(set) var selectedRange: MetricTimeRange = .last7Days
@@ -28,6 +29,7 @@ final class AppStore: ObservableObject {
     private var inspectedConnections: Set<String> = []
     private var pendingRangeReveals: [UUID: MetricTimeRange] = [:]
     private var visibilityWrites: [UUID: (id: UUID, task: Task<Void, Error>)] = [:]
+    private var widgetBridge: WidgetBridge?
 
     var isDemo: Bool { connections.isEmpty && showExamples }
     var displayedConnections: [ProjectConnection] {
@@ -74,6 +76,7 @@ final class AppStore: ObservableObject {
         } catch { storageError = error.localizedDescription }
         if ProcessInfo.processInfo.arguments.contains("--empty") { showExamples = false }
         if ProcessInfo.processInfo.arguments.contains("--demo") { connections = []; snapshots = [:]; showExamples = true }
+        widgetBridge = WidgetBridge(app: self)
         if connections.contains(where: \.notificationsEnabled) { Task { await requestNotificationAuthorization() } }
         // Every 30s, check which sources are due. Only due connections perform network work.
         timer = Task { [weak self] in

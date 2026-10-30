@@ -13,6 +13,7 @@ The repository has three main areas:
 
 - `Sources/Pulse`: the native Mac interface.
 - `Sources/PulseCore`: connectors, models, Keychain and local persistence.
+- `Sources/PulseWidgetData` and `Widgets`: display-only snapshots and native widgets.
 - `Tests`: synthetic connector and persistence checks.
 
 Examples contain fake data. Never commit credentials, private connection files or cached project data. Keep source connections read-only and the interface compact.
@@ -30,6 +31,12 @@ scripts/package-release.sh 0.1.0
 This creates a signed, notarized disk image, a ZIP containing the stapled app, and `SHA256SUMS` under `build/releases/0.1.0/`. The disk image contains only Pulse and an Applications shortcut. Notarization receipts stay in ignored `.local/releases/`.
 
 The identity must be a **Developer ID Application** certificate. An Apple Development certificate cannot replace it. Configure a notarytool Keychain profile using [Apple’s notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow); do not put credentials in a script or the repository.
+
+Signed Developer ID builds include the WidgetKit extension automatically. Its small Xcode target compiles only the shared display models, not database connectors. The app and sandboxed extension share aggregate numbers through a private `TEAMID.local.pulse.shared` App Group. This Mac-only format requires no portal registration. Credentials and individual records are never exported.
+
+Ad hoc development builds omit live widgets because App Group access needs a real signing team. For an Apple Development build, set `PULSE_DEVELOPMENT_TEAM` explicitly as well as `PULSE_SIGN_IDENTITY`. `scripts/build-widget.sh build/widget-preview release` compiles the unsigned extension and its App Intents metadata for verification.
+
+Widgets currently run on macOS. iPhone/iPad widgets would need a companion app and optional summary synchronization; Mac widgets do not appear on those devices automatically.
 
 For a local packaging check, `scripts/package-release.sh 0.1.0 --unsigned` produces explicitly labelled previews. They are not the public download.
 

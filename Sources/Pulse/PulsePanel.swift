@@ -23,6 +23,14 @@ struct PulsePanel: View {
                     self.expanded = nil
                 }
             }
+            .onChange(of: store.widgetFocusProjectID) { _, id in
+                guard let id else { return }
+                if let snapshot = store.snapshot(for: id),
+                   !(snapshot.details ?? []).isEmpty || !(snapshot.breakdowns ?? []).isEmpty {
+                    expanded = id
+                }
+                DispatchQueue.main.async { store.widgetFocusProjectID = nil }
+            }
             .alert(errorTitle, isPresented: Binding(get: { viewError != nil }, set: { if !$0 { viewError = nil } })) {
                 Button("OK") { viewError = nil }
             } message: { Text(viewError ?? "") }
@@ -62,7 +70,12 @@ struct PulsePanel: View {
 
             if store.displayedConnections.isEmpty { emptyState }
             else if store.displayedConnections.count > 3 {
-                ScrollView { projectList }.scrollBounceBehavior(.basedOnSize).frame(height: 460)
+                ScrollViewReader { proxy in
+                    ScrollView { projectList }.scrollBounceBehavior(.basedOnSize).frame(height: 460)
+                        .onChange(of: store.widgetFocusProjectID) { _, id in
+                            if let id { proxy.scrollTo(id, anchor: .top) }
+                        }
+                }
             } else { projectList }
 
             if let storageError = store.storageError {
@@ -91,7 +104,7 @@ struct PulsePanel: View {
     private var projectList: some View {
         VStack(spacing: 0) {
             ForEach(Array(store.displayedConnections.enumerated()), id: \.element.id) { index, connection in
-                projectRow(connection)
+                projectRow(connection).id(connection.id)
                 if index < store.displayedConnections.count - 1 { Divider().padding(.leading, 65).padding(.trailing, 20) }
             }
         }.padding(.vertical, 4)

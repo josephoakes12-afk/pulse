@@ -1,4 +1,5 @@
 import AppKit
+import PulseCore
 import SwiftUI
 import UserNotifications
 
@@ -17,6 +18,8 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var panelObserver: NSObjectProtocol?
+    private var didStartStore = false
+    private var pendingWidgetLink: WidgetDeepLink?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -50,6 +53,11 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         }
         Task {
             await AppStore.shared.start()
+            didStartStore = true
+            if let link = pendingWidgetLink {
+                pendingWidgetLink = nil
+                openWidgetLink(link)
+            }
             let arguments = ProcessInfo.processInfo.arguments
             if arguments.contains("--show-panel") || (AppStore.shared.connections.isEmpty && !arguments.contains("--preview") && !arguments.contains("--connections") && !arguments.contains("--add-project")) {
                 showPanel()
@@ -64,6 +72,20 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         if popover.isShown { popover.performClose(nil) } else { showPanel() }
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let link = urls.compactMap({ WidgetDeepLink(url: $0) }).first else { return }
+        if didStartStore { openWidgetLink(link) }
+        else { pendingWidgetLink = link }
+    }
+
+    private func openWidgetLink(_ link: WidgetDeepLink) {
+        if let range = link.range { AppStore.shared.selectRange(range) }
+        showPanel()
+        if let id = link.projectID {
+            DispatchQueue.main.async { AppStore.shared.widgetFocusProjectID = id }
+        }
+    }
+
     private func showPanel() {
         guard let button = statusItem?.button else { return }
         NSApp.activate(ignoringOtherApps: true)
@@ -72,7 +94,7 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag && !popover.isShown { showPanel() }
+        if !popover.isShown { showPanel() }
         return false
     }
 
