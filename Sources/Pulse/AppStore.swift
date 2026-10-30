@@ -14,6 +14,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var recentEvents: [UUID: [PulseEvent]] = [:]
     @Published var storageError: String?
     @Published var showExamples: Bool = true
+    @Published private var demoProjects = DemoData.projects
     private var storage: LocalStore?
     private let credentials = CredentialStore()
     private var timer: Task<Void, Never>?
@@ -24,7 +25,7 @@ final class AppStore: ObservableObject {
     private var inspectedConnections: Set<String> = []
 
     var isDemo: Bool { connections.isEmpty && showExamples }
-    var displayedConnections: [ProjectConnection] { isDemo ? DemoData.projects : connections }
+    var displayedConnections: [ProjectConnection] { isDemo ? demoProjects : connections }
     var isRefreshing: Bool { !refreshing.isEmpty }
 
     init() {
@@ -92,32 +93,32 @@ final class AppStore: ObservableObject {
 
     private func refresh(_ candidate: ProjectConnection) async {
         var connection = candidate
-        guard connection.enabled, connections.contains(connection), !refreshing.contains(connection.id), let storage else { return }
+        guard connection.enabled, isCurrent(connection), !refreshing.contains(connection.id), let storage else { return }
         refreshing.insert(connection.id)
         lastAttempts[connection.id] = Date()
         defer { refreshing.remove(connection.id) }
         do {
             let secret = try credentials.load(for: connection.id)
             connection = await inspectAutomaticStats(connection, secret: secret)
-            guard connections.contains(connection) else { return }
+            guard isCurrent(connection) else { return }
             let snapshot = try await collect(connection, secret: secret)
             // A removed or edited connection cannot be overwritten by a late response.
-            guard connections.contains(connection) else { return }
+            guard isCurrent(connection) else { return }
             let authorized = await notificationAuthorization()
-            guard connections.contains(connection) else { return }
+            guard isCurrent(connection) else { return }
             let pending = try await storage.acceptSnapshot(snapshot, notificationsEnabled: connection.notificationsEnabled && authorized, expectedConnection: connection)
-            guard connections.contains(connection) else { return }
+            guard isCurrent(connection) else { return }
             snapshots[connection.id] = snapshot
             errors.removeValue(forKey: connection.id)
             if pending.count > 3, let first = pending.first, let last = pending.last {
-                guard connections.contains(connection), connection.notificationsEnabled else { return }
+                guard isCurrent(connection), connection.notificationsEnabled else { return }
                 let summary = PulseEvent(id: "batch:\(first.id):\(last.id)", title: "\(pending.count) new events. \(last.title)", occurredAt: last.occurredAt)
                 do {
                     try await notify(summary, project: connection)
                     for event in pending { try await storage.markNotified(projectID: connection.id, eventID: event.id) }
                 } catch { errors[connection.id] = "Updated. An alert is waiting to be delivered." }
             } else { for event in pending {
-                guard connections.contains(connection), connection.notificationsEnabled else { break }
+                guard isCurrent(connection), connection.notificationsEnabled else { break }
                 do {
                     try await notify(event, project: connection)
                     try await storage.markNotified(projectID: connection.id, eventID: event.id)
@@ -128,9 +129,13 @@ final class AppStore: ObservableObject {
             } }
             await loadEvents()
         } catch {
-            guard connections.contains(connection) else { return }
+            guard isCurrent(connection) else { return }
             errors[connection.id] = error.localizedDescription
         }
+    }
+
+    private func isCurrent(_ connection: ProjectConnection) -> Bool {
+        connections.contains { $0.hasSameCollectionConfiguration(as: connection) }
     }
 
     private func inspectionKey(_ connection: ProjectConnection) -> String { connection.id.uuidString + connection.credentialVersion.uuidString + connection.endpoint + connection.query }
@@ -147,14 +152,15 @@ final class AppStore: ObservableObject {
         do {
             let connector = PostgresConnector()
             let available = try await connector.discoverTables(connection: connection, secret: secret)
-            guard connections.contains(connection) else { return connection }
+            guard isCurrent(connection) else { return connection }
             let selected = PostgresConnector.inferredSourceTables(connection: connection, available: available)
             guard !selected.isEmpty else { completed = true; return connection }
             let relationships = try await connector.discoverRelationships(connection: connection, secret: secret, tables: available)
-            guard !isMutating, connections.contains(connection), let storage,
-                  let index = connections.firstIndex(of: connection) else { return connection }
-            let upgraded = PostgresConnector.configureAnalytics(base: connection, tables: selected, relationships: relationships)
-            guard upgraded != connection else { completed = true; return connection }
+            guard !isMutating, let storage,
+                  let index = connections.firstIndex(where: { $0.hasSameCollectionConfiguration(as: connection) }) else { return connection }
+            let current = connections[index]
+            let upgraded = PostgresConnector.configureAnalytics(base: current, tables: selected, relationships: relationships)
+            guard upgraded != current else { completed = true; return current }
             isMutating = true
             defer { isMutating = false }
             var updated = connections
@@ -206,6 +212,25 @@ final class AppStore: ObservableObject {
     }
 
     func secret(for id: UUID) throws -> String { try credentials.load(for: id) ?? "" }
+
+    func updateIcon(projectID: UUID, symbol: String, imageData: Data?) async throws {
+        if isDemo, let index = demoProjects.firstIndex(where: { $0.id == projectID }) {
+            try ProjectIconLimits.validate(symbol: symbol, imageData: imageData)
+            demoProjects[index].symbol = symbol
+            demoProjects[index].iconImageData = imageData
+            return
+        }
+        guard !isMutating else { throw PulseError.storage("Another connection is being updated. Try again in a moment.") }
+        guard let storage, let index = connections.firstIndex(where: { $0.id == projectID }) else {
+            throw PulseError.storage("This connection is no longer available.")
+        }
+        isMutating = true
+        defer { isMutating = false }
+        // Icon edits are local presentation changes. They never load a
+        // credential, reset a baseline or make a source request.
+        let updated = try await storage.updateIcon(projectID: projectID, symbol: symbol, imageData: imageData)
+        connections[index] = updated
+    }
 
     func remove(_ connection: ProjectConnection) async throws {
         guard !isMutating else { throw PulseError.storage("Another connection is being updated. Try again in a moment.") }

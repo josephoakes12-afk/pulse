@@ -13,6 +13,8 @@ struct AddProjectView: View {
     @State private var auth: Authentication = .bearer
     @State private var header = "X-API-Key"
     @State private var projectName = ""
+    @State private var iconSymbol = "square.stack.3d.up"
+    @State private var iconImageData: Data?
     @State private var candidates: [DiscoveredMetric] = []
     @State private var selection: Set<String> = []
     @State private var tables: [DatabaseTable] = []
@@ -35,8 +37,9 @@ struct AddProjectView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: step == .connection ? "plus.app" : "checkmark.circle")
-                    .font(.system(size: 25, weight: .light)).foregroundStyle(.tint)
+                ConnectionIconButton(symbol: iconSymbol, imageData: iconImageData, size: 42) { symbol, imageData in
+                    iconSymbol = symbol; iconImageData = imageData
+                }.accessibilityLabel("Choose project icon").disabled(busy || saving)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.system(size: 18, weight: .semibold))
                     Text(subtitle).font(.callout).foregroundStyle(.secondary)
@@ -93,7 +96,9 @@ struct AddProjectView: View {
                 finish(); NotificationCenter.default.post(name: .pulseShowPanel, object: nil)
             }
         }
-        .sheet(isPresented: $advanced) { ConnectionEditor(store: store, existing: nil) }
+        .sheet(isPresented: $advanced) {
+            ConnectionEditor(store: store, existing: nil, initialSymbol: iconSymbol, initialIconImageData: iconImageData)
+        }
     }
 
     private var title: String { step == .connection ? "Add a Project" : step == .tables ? "What would you like to count?" : "Headline numbers" }
@@ -188,6 +193,7 @@ struct AddProjectView: View {
             if projectName.isEmpty { projectName = imported?.name ?? parsed.suggestedName }
             var base = imported ?? ProjectConnection(name: projectName, kind: kind, endpoint: parsed.endpoint)
             base.name = projectName
+            base.symbol = iconSymbol; base.iconImageData = iconImageData
             base.endpoint = parsed.endpoint
             base.authHeader = auth == .header ? header.trimmingCharacters(in: .whitespacesAndNewlines) : "Authorization"
             if let imported, !imported.metrics.isEmpty {
@@ -247,6 +253,7 @@ struct AddProjectView: View {
         saving = true; error = nil
         defer { saving = false }
         connection.name = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        connection.symbol = iconSymbol; connection.iconImageData = iconImageData
         do {
             if kind == .postgres && imported == nil {
                 connection = try PostgresConnector.selectedCountingConnection(base: connection, metricPaths: selection)
@@ -295,6 +302,7 @@ struct AddProjectView: View {
                 guard size <= 65_536 else { throw PulseError.invalidConfiguration("Choose a setup file smaller than 64 KB.") }
                 let preset = try ProjectPreset.decode(Data(contentsOf: url))
                 kind = preset.kind; address = preset.endpoint; secret = ""; projectName = preset.name
+                iconSymbol = preset.symbol; iconImageData = preset.iconImageData
                 auth = preset.authHeader.lowercased() == "authorization" ? .bearer : .header
                 header = preset.authHeader
                 imported = preset

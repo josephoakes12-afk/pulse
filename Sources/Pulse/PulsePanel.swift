@@ -6,10 +6,14 @@ struct PulsePanel: View {
     @ObservedObject var store: AppStore
     @State private var expanded: UUID?
     @State private var hovered: UUID?
+    @State private var iconError: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         IntegralPanelLayout { panelContent }.background(.regularMaterial)
+            .alert("Couldn’t change icon", isPresented: Binding(get: { iconError != nil }, set: { if !$0 { iconError = nil } })) {
+                Button("OK") { iconError = nil }
+            } message: { Text(iconError ?? "") }
     }
 
     private var panelContent: some View {
@@ -76,8 +80,12 @@ struct PulsePanel: View {
         let hasDetails = !details.isEmpty || !breakdowns.isEmpty
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: project.symbol).font(.system(size: 16)).foregroundStyle(.secondary)
-                    .frame(width: 32, height: 34).background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 9))
+                ConnectionIconButton(symbol: project.symbol, imageData: project.iconImageData) { symbol, imageData in
+                    Task {
+                        do { try await store.updateIcon(projectID: project.id, symbol: symbol, imageData: imageData) }
+                        catch { iconError = error.localizedDescription }
+                    }
+                }.accessibilityLabel("Change \(project.name) icon")
                 VStack(alignment: .leading, spacing: 7) {
                     HStack(spacing: 8) {
                         projectName(project)

@@ -43,6 +43,9 @@ public actor LocalStore {
         guard Set(connections.map(\.id)).count == connections.count else {
             throw PulseError.storage("A connection is listed more than once.")
         }
+        for connection in connections {
+            try ProjectIconLimits.validate(symbol: connection.symbol, imageData: connection.iconImageData)
+        }
         try database.transaction {
             let previousConnections = try database.rows("SELECT payload FROM connections").map { try decode(ProjectConnection.self, row: $0) }
             let previous = previousConnections.map { $0.id.uuidString }
@@ -63,6 +66,27 @@ public actor LocalStore {
                 }
             }
         }
+    }
+
+    /// Edits only the current icon, even if source settings changed while its picker
+    /// was open. A removed connection is never recreated by an icon edit.
+    @discardableResult
+    public func updateIcon(projectID: UUID, symbol: String, imageData: Data?) throws -> ProjectConnection {
+        try ProjectIconLimits.validate(symbol: symbol, imageData: imageData)
+        var updated: ProjectConnection?
+        try database.transaction {
+            guard let row = try database.rows("SELECT payload FROM connections WHERE id = ?", [.text(projectID.uuidString)]).first else {
+                throw PulseError.invalidConfiguration("This connection has been removed.")
+            }
+            var connection = try decode(ProjectConnection.self, row: row)
+            connection.symbol = symbol
+            connection.iconImageData = imageData
+            try database.execute("UPDATE connections SET payload = ? WHERE id = ?",
+                                 [.text(try json(connection)), .text(projectID.uuidString)])
+            updated = connection
+        }
+        guard let updated else { throw PulseError.storage("Could not update this connection’s icon.") }
+        return updated
     }
 
     public func loadSnapshots() throws -> [ProjectSnapshot] {
@@ -90,7 +114,7 @@ public actor LocalStore {
                 // write transaction so stale work cannot recreate deleted rows.
                 guard expectedConnection.id == snapshot.projectID, expectedConnection.enabled,
                       let row = try database.rows("SELECT payload FROM connections WHERE id = ?", [.text(project)]).first,
-                      try decode(ProjectConnection.self, row: row) == expectedConnection else { return }
+                      try decode(ProjectConnection.self, row: row).hasSameCollectionConfiguration(as: expectedConnection) else { return }
             }
             accepted = true
             try persistSnapshot(snapshot)

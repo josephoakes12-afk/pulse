@@ -43,6 +43,8 @@ The test accepts loopback addresses only and never provisions or changes a datab
 
 Click **Add Project**, paste the API URL or database connection details, and enter its credential if needed. Connect to preview the available numbers, choose up to three, then add the project. Custom paths, queries and other settings remain available in Advanced.
 
+Click a project's icon during setup, on its card, or in Connections to choose a symbol or an image. Imported images stay on this Mac as small thumbnails; changing an icon does not reconnect the source.
+
 For an existing project, open its settings and choose **Credentials…** to add or replace the token or password without editing the rest of its setup.
 
 For a reusable setup, import a project file such as [examples/project.pulse.json](examples/project.pulse.json). It contains only connection settings and metric definitions; enter credentials separately. Importing a file never contacts its endpoint or saves a project automatically.

@@ -15,7 +15,10 @@ struct ConnectionsView: View {
             List(selection: $selectedID) {
                 Section("Connections") {
                     ForEach(store.connections) { project in
-                        Label(project.name, systemImage: project.symbol).tag(project.id).padding(.vertical, 3)
+                        HStack(spacing: 8) {
+                            iconButton(for: project, size: 22)
+                            Text(project.name)
+                        }.tag(project.id).padding(.vertical, 3)
                     }
                 }
             }
@@ -40,7 +43,10 @@ struct ConnectionsView: View {
                         }
                         if let message = store.errors[project.id] { Text(message).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
                     } header: {
-                        Label(project.name, systemImage: project.symbol).font(.title3.weight(.semibold))
+                        HStack(spacing: 10) {
+                            iconButton(for: project, size: 32)
+                            Text(project.name).font(.title3.weight(.semibold))
+                        }
                     }
                     Section {
                         HStack {
@@ -86,6 +92,14 @@ struct ConnectionsView: View {
             Text("Saved on this Mac. Refreshing pauses during sleep and resumes on wake.").font(.caption).foregroundStyle(.secondary)
         }
     }
+    private func iconButton(for project: ProjectConnection, size: CGFloat) -> some View {
+        ConnectionIconButton(symbol: project.symbol, imageData: project.iconImageData, size: size) { symbol, imageData in
+            Task {
+                do { try await store.updateIcon(projectID: project.id, symbol: symbol, imageData: imageData) }
+                catch { self.error = error.localizedDescription }
+            }
+        }.accessibilityLabel("Change \(project.name) icon")
+    }
     private struct EditorItem: Identifiable {
         var id = UUID()
         var connection: ProjectConnection?
@@ -125,7 +139,10 @@ struct CredentialEditor: View {
                     Task {
                         do {
                             let value = bearer && !secret.isEmpty && !secret.lowercased().hasPrefix("bearer ") ? "Bearer \(secret)" : secret
-                            try await store.save(connection, secret: value)
+                            guard let current = store.connections.first(where: { $0.id == connection.id }) else {
+                                throw PulseError.storage("This connection is no longer available.")
+                            }
+                            try await store.save(current, secret: value)
                             dismiss()
                         } catch { self.error = error.localizedDescription }
                         saving = false
@@ -149,6 +166,8 @@ extension Notification.Name { static let pulseSelectProject = Notification.Name(
 struct ConnectionEditor: View {
     @ObservedObject var store: AppStore
     let existing: ProjectConnection?
+    var initialSymbol = "square.stack.3d.up"
+    var initialIconImageData: Data?
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ProjectConnection(name: "", metrics: [MetricDefinition(label: "Users", path: "metrics.users"), MetricDefinition(label: "Bookings · 7d", path: "metrics.bookings")])
     @State private var secret = ""
@@ -168,16 +187,15 @@ struct ConnectionEditor: View {
             Divider()
             Form {
                 Section {
-                    TextField("Name", text: $draft.name, prompt: Text("My project"))
-                    Picker("Source", selection: $draft.kind) { ForEach(ConnectorKind.allCases, id: \.self) { Text($0.title).tag($0) } }
-                    Picker("Icon", selection: $draft.symbol) {
-                        Label("Project", systemImage: "square.stack.3d.up").tag("square.stack.3d.up")
-                        Label("Bookings", systemImage: "calendar").tag("calendar")
-                        Label("Game", systemImage: "gamecontroller").tag("gamecontroller")
-                        Label("Publication", systemImage: "newspaper").tag("newspaper")
-                        Label("Website", systemImage: "globe").tag("globe")
-                        Label("Shop", systemImage: "bag").tag("bag")
+                    LabeledContent("Name") {
+                        HStack(spacing: 10) {
+                            ConnectionIconButton(symbol: draft.symbol, imageData: draft.iconImageData) { symbol, imageData in
+                                draft.symbol = symbol; draft.iconImageData = imageData
+                            }.accessibilityLabel("Choose project icon")
+                            TextField("Name", text: $draft.name, prompt: Text("My project")).labelsHidden()
+                        }
                     }
+                    Picker("Source", selection: $draft.kind) { ForEach(ConnectorKind.allCases, id: \.self) { Text($0.title).tag($0) } }
                 }
                 Section {
                     if draft.kind == .http {
@@ -242,7 +260,7 @@ struct ConnectionEditor: View {
             if let existing {
                 draft = existing
                 do { secret = try store.secret(for: existing.id) } catch { credentialLoaded = false; self.error = "The saved credential couldn’t be read. Unlock Keychain and reopen this connection." }
-            }
+            } else { draft.symbol = initialSymbol; draft.iconImageData = initialIconImageData }
         }
         .onChange(of: draft.kind) { _, kind in
             testResult = nil
@@ -276,7 +294,16 @@ struct ConnectionEditor: View {
     private func save() async {
         saving = true; error = nil
         defer { saving = false }
-        do { try await store.save(cleanDraft(), secret: secret); dismiss() }
+        do {
+            var connection = cleanDraft()
+            // A card icon can change while this editor is open. Preserve that
+            // newer choice unless the icon was explicitly edited here too.
+            if let existing, draft.symbol == existing.symbol, draft.iconImageData == existing.iconImageData,
+               let current = store.connections.first(where: { $0.id == existing.id }) {
+                connection.symbol = current.symbol; connection.iconImageData = current.iconImageData
+            }
+            try await store.save(connection, secret: secret); dismiss()
+        }
         catch { self.error = error.localizedDescription }
     }
 }

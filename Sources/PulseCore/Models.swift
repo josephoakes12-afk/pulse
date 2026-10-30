@@ -16,6 +16,8 @@ public struct ProjectConnection: Codable, Identifiable, Equatable, Sendable {
     public var id: UUID
     public var name: String
     public var symbol: String
+    /// A normalized, local thumbnail. Source file paths are never retained.
+    public var iconImageData: Data?
     public var kind: ConnectorKind
     public var endpoint: String
     public var query: String
@@ -29,8 +31,17 @@ public struct ProjectConnection: Codable, Identifiable, Equatable, Sendable {
     public var link: String
     public var autoStats: DatabaseAnalyticsPlan?
     public var sourceTables: [DatabaseTable]?
-    public init(id: UUID = UUID(), name: String, symbol: String = "square.stack.3d.up", kind: ConnectorKind = .http, endpoint: String = "", query: String = "", authHeader: String = "Authorization", credentialVersion: UUID = UUID(), metrics: [MetricDefinition] = [], intervalSeconds: Int = 300, notificationsEnabled: Bool = false, enabled: Bool = true, link: String = "", autoStats: DatabaseAnalyticsPlan? = nil, sourceTables: [DatabaseTable]? = nil) {
-        self.id = id; self.name = name; self.symbol = symbol; self.kind = kind; self.endpoint = endpoint; self.query = query; self.authHeader = authHeader; self.credentialVersion = credentialVersion; self.metrics = metrics; self.intervalSeconds = intervalSeconds; self.notificationsEnabled = notificationsEnabled; self.enabled = enabled; self.link = link; self.autoStats = autoStats; self.sourceTables = sourceTables
+    public init(id: UUID = UUID(), name: String, symbol: String = "square.stack.3d.up", iconImageData: Data? = nil, kind: ConnectorKind = .http, endpoint: String = "", query: String = "", authHeader: String = "Authorization", credentialVersion: UUID = UUID(), metrics: [MetricDefinition] = [], intervalSeconds: Int = 300, notificationsEnabled: Bool = false, enabled: Bool = true, link: String = "", autoStats: DatabaseAnalyticsPlan? = nil, sourceTables: [DatabaseTable]? = nil) {
+        self.id = id; self.name = name; self.symbol = symbol; self.iconImageData = iconImageData; self.kind = kind; self.endpoint = endpoint; self.query = query; self.authHeader = authHeader; self.credentialVersion = credentialVersion; self.metrics = metrics; self.intervalSeconds = intervalSeconds; self.notificationsEnabled = notificationsEnabled; self.enabled = enabled; self.link = link; self.autoStats = autoStats; self.sourceTables = sourceTables
+    }
+
+    /// Icon edits do not invalidate an in-flight collection. All other settings,
+    /// including credentials, metric mappings and alert choices, must still match.
+    public func hasSameCollectionConfiguration(as other: ProjectConnection) -> Bool {
+        var normalized = other
+        normalized.symbol = symbol
+        normalized.iconImageData = iconImageData
+        return self == normalized
     }
 }
 
