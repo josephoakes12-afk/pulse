@@ -112,6 +112,10 @@ final class AppStore: ObservableObject {
     func setCloudSyncEnabled(_ enabled: Bool) async { await cloudSyncBridge?.setEnabled(enabled) }
     func syncCloudNow() { cloudSyncBridge?.syncNow() }
     func useThisMacForCloud() { cloudSyncBridge?.useThisMac() }
+    func removeCloudCopy(context: PrivateCloudRemovalContext) async throws {
+        guard let cloudSyncBridge else { throw PulseError.storage("iCloud sync is unavailable.") }
+        try await cloudSyncBridge.removeCloudCopy(context: context)
+    }
     func setCloudSyncStatus(_ status: PrivateCloudSyncStatus) { cloudSyncStatus = status }
     func setCloudSummary(_ summary: WidgetSnapshot?) {
         let first = cloudSummary == nil

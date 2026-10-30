@@ -20,7 +20,7 @@ public enum CloudSyncPolicy {
 
         if let local {
             try local.validate(now: now)
-            guard local.publisherID == publisherID else { throw CloudSyncSnapshotError.publisherMismatch }
+            guard local.publisherID == publisherID, !local.isCleared else { throw CloudSyncSnapshotError.publisherMismatch }
         }
         try remote?.validate(now: now)
 
@@ -28,6 +28,12 @@ public enum CloudSyncPolicy {
             return remote.map(CloudSyncDecision.receive) ?? .unchanged(nil)
         }
         guard let remote else { return .publish(local, replacingPublisherID: nil) }
+
+        if remote.isCleared {
+            return replacingPublisherID == remote.publisherID
+                ? .publish(local, replacingPublisherID: remote.publisherID)
+                : .receive(remote)
+        }
 
         guard remote.publisherID == publisherID else {
             // A stale takeover confirmation must not replace a different Mac

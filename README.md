@@ -22,6 +22,8 @@ Use the range menu for **24h · 7d · 30d · Lifetime**. Click **ⓘ** to choose
 
 Optional native alerts report new activity. Use **Test alert** in Settings to check them.
 
+**Settings → General** includes optional **Open at Login** and **Check for Updates**. Updates open the GitHub download page.
+
 For desktop widgets, right-click the desktop → **Edit Widgets → Pulse**. Choose **Project** or **Overview**; right-click a widget to choose its project and time range. Keep Pulse running for fresh numbers. macOS controls widget refresh timing.
 
 ## Your data stays yours

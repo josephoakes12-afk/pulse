@@ -10,14 +10,19 @@ public struct CloudSyncSnapshot: Codable, Equatable, Sendable {
     public let schemaVersion: Int
     public let publisherID: UUID
     public let snapshot: WidgetSnapshot
+    /// A minimal marker contains no projects and fences former collectors after
+    /// the person removes their cloud copy. Older clients still read it as an
+    /// empty summary belonging to another publisher.
+    public let isCleared: Bool
 
     public init(schemaVersion: Int = CloudSyncSnapshot.currentSchemaVersion,
-                publisherID: UUID, snapshot: WidgetSnapshot) {
+                publisherID: UUID, snapshot: WidgetSnapshot, isCleared: Bool = false) {
         self.schemaVersion = schemaVersion
         self.publisherID = publisherID
         var summary = snapshot
         for index in summary.projects.indices { summary.projects[index].iconImageData = nil }
         self.snapshot = summary
+        self.isCleared = isCleared
     }
 
     public static func prepared(publisherID: UUID, snapshot: WidgetSnapshot,
@@ -60,14 +65,24 @@ public struct CloudSyncSnapshot: Codable, Equatable, Sendable {
         schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
         publisherID = try values.decode(UUID.self, forKey: .publisherID)
         snapshot = try values.decode(WidgetSnapshot.self, forKey: .snapshot)
+        isCleared = try values.decodeIfPresent(Bool.self, forKey: .cleared) ?? false
         guard snapshot.projects.allSatisfy({ $0.iconImageData == nil }) else {
             throw CloudSyncSnapshotError.invalidSnapshot
         }
     }
 
+    public func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(schemaVersion, forKey: .schemaVersion)
+        try values.encode(publisherID, forKey: .publisherID)
+        try values.encode(snapshot, forKey: .snapshot)
+        if isCleared { try values.encode(true, forKey: .cleared) }
+    }
+
     private func validateContents(now: Date) throws {
         guard schemaVersion == Self.currentSchemaVersion else { throw CloudSyncSnapshotError.unsupportedVersion }
         try snapshot.validate()
+        guard !isCleared || snapshot.projects.isEmpty else { throw CloudSyncSnapshotError.invalidSnapshot }
         guard Self.validTimestamp(now, relativeTo: now),
               Self.validTimestamp(snapshot.generatedAt, relativeTo: now),
               snapshot.projects.allSatisfy({ project in
@@ -84,7 +99,7 @@ public struct CloudSyncSnapshot: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, publisherID, snapshot
+        case schemaVersion, publisherID, snapshot, cleared
     }
 }
 

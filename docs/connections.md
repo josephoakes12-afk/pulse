@@ -74,6 +74,8 @@ Optional private iCloud sync sends project names, SF Symbols, selected headline 
 
 Enable it in **Settings → iCloud**. One Mac provides the summary; **Use this Mac** explicitly changes that collector. An Apple Account change pauses sync until you choose the new account. Turning sync off stops transfers and hides received summaries on that Mac; it does not delete the copy already in iCloud. Unsigned source builds remain local-only unless configured for iCloud signing.
 
+**Remove iCloud copy** clears synced project names and numbers and turns off uploads. Other Macs pause when they next sync. A small empty marker remains to prevent an older collector restoring the removed numbers; **Use this Mac** explicitly resumes uploads. Local connections and credentials stay saved.
+
 Configuration, cached summaries and notification receipts live in Application Support. Credentials live in Keychain. Neither belongs in the source repository. Source connections are read-only; notification delivery records are local.
 
 Collection pauses while the app is closed, your Mac is asleep, or the network is unavailable. Pulse keeps the last successful numbers with their timestamp and catches up when possible. New-event alerts catch up over at most seven days, with a bounded local event history. Catch-up depends on the source retaining its history; expired or never-recorded activity cannot be recovered.

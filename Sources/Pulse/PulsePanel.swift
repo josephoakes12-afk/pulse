@@ -93,7 +93,8 @@ struct PulsePanel: View {
                 Menu {
                     Button("Add Project…") { AppWindows.showAddProject(store: store) }
                     Button("Refresh") { Task { await store.refreshAll() } }.keyboardShortcut("r").disabled(store.isDemo || store.isRefreshing || store.connections.isEmpty)
-                    Button("Connections…") { AppWindows.showConnections(store: store) }.keyboardShortcut(",")
+                    Button("Connections…") { AppWindows.showConnections(store: store) }
+                    Button("Settings…") { AppWindows.showGeneralSettings(store: store) }.keyboardShortcut(",")
                     Button("iCloud…") { AppWindows.showCloudSync(store: store) }
                     if store.connections.isEmpty { Button(store.showExamples ? "Hide example projects" : "Show example projects") { store.showExamples.toggle() } }
                     Divider()

@@ -5,6 +5,13 @@ import Foundation
 import PulseCore
 import PulseWidgetData
 
+/// The Settings confirmation holds this immutable value. Its opaque account
+/// binding is never displayed or included in the synced payload.
+struct PrivateCloudRemovalContext: Equatable, Sendable {
+    fileprivate let accountID: String
+    fileprivate let publisherID: UUID
+}
+
 struct PrivateCloudSyncStatus {
     var enabled = false
     var configured = false
@@ -13,6 +20,9 @@ struct PrivateCloudSyncStatus {
     var needsAccountApproval = false
     var otherPublisherID: UUID?
     var working = false
+    var copyRemoved = false
+    var removalContext: PrivateCloudRemovalContext?
+    var canRemoveCopy: Bool { configured && !working && !needsAccountApproval && removalContext != nil }
 }
 
 /// A small display-only bridge. Local connections and their credentials never
@@ -25,6 +35,7 @@ final class PrivateCloudSyncController {
         var enabled = false
         var accountID: String?
         var hasPublished = false
+        var removedPublisherID: UUID?
     }
     private struct SavedSummary: Codable {
         var accountID: String
@@ -43,6 +54,8 @@ final class PrivateCloudSyncController {
     private var observers: [NSObjectProtocol] = []
     private var timer: Task<Void, Never>?
     private var work: Task<Void, Never>?
+    private var removalWork: Task<PrivateCloudReceipt, Error>?
+    private var removingCopy = false
     private var delayedWork: Task<Void, Never>?
     private var pendingChange = false
     private var generation = UUID()
@@ -72,6 +85,16 @@ final class PrivateCloudSyncController {
         status.enabled = preferences.enabled
         status.configured = transport != nil && preferencesReadable
         status.title = !preferencesReadable ? "Couldn’t read iCloud settings" : transport == nil ? "Unavailable in this build" : preferences.enabled ? "Connecting…" : "Off"
+        status.copyRemoved = preferences.removedPublisherID != nil
+        if let removed = preferences.removedPublisherID {
+            status.otherPublisherID = removed
+            if transport != nil { status.title = "Cloud copy removed" }
+        } else if let accountID = preferences.accountID,
+                  let data = try? Data(contentsOf: summaryURL), data.count <= CloudSyncSnapshot.maximumEncodedBytes + 2_048,
+                  let saved = try? JSONDecoder().decode(SavedSummary.self, from: data), saved.accountID == accountID,
+                  !saved.payload.isCleared, (try? saved.payload.validate()) != nil {
+            status.removalContext = PrivateCloudRemovalContext(accountID: accountID, publisherID: saved.payload.publisherID)
+        }
         updateStatus()
 
         let publishers: [AnyPublisher<Void, Never>] = [
@@ -99,16 +122,16 @@ final class PrivateCloudSyncController {
         schedule()
     }
 
-    func setEnabled(_ enabled: Bool) async {
-        guard preferencesReadable, let transport else { return }
+    func setEnabled(_ enabled: Bool, replacingPublisherID: UUID? = nil) async {
+        guard preferencesReadable, !removingCopy, let transport else { return }
         let previousPreferences = preferences
         cancelWork()
         if !enabled {
             preferences.enabled = false
             status.enabled = false
-            status.title = "Off"
+            status.title = status.copyRemoved ? "Cloud copy removed" : "Off"
             status.needsAccountApproval = false
-            status.otherPublisherID = nil
+            status.otherPublisherID = preferences.removedPublisherID
             app?.setCloudSummary(nil)
             do { try savePreferences() } catch { status.title = "Couldn’t save iCloud settings" }
             updateStatus()
@@ -126,6 +149,9 @@ final class PrivateCloudSyncController {
             // An explicit enable/reconnect is the only way to bind an account.
             if preferences.accountID != accountID {
                 preferences.hasPublished = false
+                preferences.removedPublisherID = nil
+                status.copyRemoved = false
+                status.removalContext = nil
                 serverRetryUntil = .distantPast
                 lastLocal = nil
                 app?.setCloudSummary(nil)
@@ -140,7 +166,7 @@ final class PrivateCloudSyncController {
             status.working = false
             nextAttempt = .distantPast
             updateStatus()
-            schedule(force: true)
+            schedule(force: true, replacingPublisherID: replacingPublisherID)
         } catch {
             guard token == generation else { return }
             preferences = previousPreferences
@@ -153,7 +179,75 @@ final class PrivateCloudSyncController {
 
     func useThisMac() {
         guard let owner = status.otherPublisherID, app?.connections.isEmpty == false else { return }
+        if status.copyRemoved {
+            Task { await setEnabled(true, replacingPublisherID: owner) }
+            return
+        }
         schedule(force: true, replacingPublisherID: owner)
+    }
+
+    /// The caller must first confirm the exact context shown by Settings. Sync
+    /// is persisted Off before any clearing request, and only display caches
+    /// are removed locally; source connections and credentials are untouched.
+    func removeCloudCopy(context: PrivateCloudRemovalContext) async throws {
+        guard preferencesReadable, status.configured, !removingCopy,
+              preferences.accountID == context.accountID, status.removalContext == context,
+              let transport else { throw PrivateCloudTransportError.accountChanged }
+        cancelWork()
+        let token = generation
+        preferences.enabled = false
+        status.enabled = false
+        app?.setCloudSummary(nil)
+        // If Off cannot be persisted, don't make a remote change which could
+        // be undone automatically on the next launch.
+        do {
+            try savePreferences()
+            try removeDisplayCaches()
+        } catch {
+            status.title = "Couldn’t save iCloud settings"
+            updateStatus()
+            throw error
+        }
+        lastLocal = nil
+        guard Date() >= serverRetryUntil else {
+            status.title = "Cloud removal waiting for iCloud"
+            updateStatus()
+            throw PrivateCloudTransportError.unavailable(retryAfter: serverRetryUntil.timeIntervalSinceNow)
+        }
+        removingCopy = true
+        status.working = true
+        status.title = "Removing cloud copy…"
+        updateStatus()
+        let task = Task {
+            try await transport.removeCopy(expectedAccountID: context.accountID, confirmedPublisherID: context.publisherID)
+        }
+        removalWork = task
+        defer {
+            if token == generation {
+                removalWork = nil
+                removingCopy = false
+                status.working = false
+                updateStatus()
+            }
+        }
+        do {
+            let receipt = try await withTaskCancellationHandler { try await task.value }
+                onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard token == generation, preferences.accountID == receipt.accountID else {
+                throw PrivateCloudTransportError.accountChanged
+            }
+            acceptRemoved(receipt, requestedHere: true)
+        } catch {
+            guard token == generation else { throw error }
+            if case PrivateCloudTransportError.unavailable(let delay) = error {
+                serverRetryUntil = Date().addingTimeInterval(max(120, delay ?? 120))
+                nextAttempt = serverRetryUntil
+            }
+            status.title = "Couldn’t remove cloud copy"
+            updateStatus()
+            throw error
+        }
     }
 
     private func accountChanged() {
@@ -163,15 +257,17 @@ final class PrivateCloudSyncController {
         try? FileManager.default.removeItem(at: summaryURL)
         status.verifiedAt = nil
         status.otherPublisherID = nil
+        status.removalContext = nil
+        status.copyRemoved = false
         if preferences.enabled {
             status.title = "Apple Account changed"
             status.needsAccountApproval = true
-        }
+        } else { status.title = "Off" }
         updateStatus()
     }
 
     private func schedule(force: Bool = false, replacingPublisherID: UUID? = nil) {
-        guard preferences.enabled, status.configured, !status.needsAccountApproval else { return }
+        guard preferences.enabled, status.configured, !status.needsAccountApproval, !removingCopy else { return }
         guard work == nil else { pendingChange = true; return }
         let allowedAt = force ? serverRetryUntil : max(nextAttempt, serverRetryUntil)
         if allowedAt > Date() {
@@ -232,7 +328,8 @@ final class PrivateCloudSyncController {
 
             // A fresh receiving Mac has no outbound candidate. A Mac that has
             // already published must send an empty snapshot after removals.
-            let canPublish = !app.connections.isEmpty || preferences.hasPublished
+            let hasExplicitResume = preferences.removedPublisherID == nil || replacingPublisherID == preferences.removedPublisherID
+            let canPublish = hasExplicitResume && (!app.connections.isEmpty || preferences.hasPublished)
             let candidate: CloudSyncSnapshot?
             if canPublish {
                 var snapshot = WidgetSnapshotBuilder.make(connections: app.connections, snapshots: app.snapshots,
@@ -267,8 +364,8 @@ final class PrivateCloudSyncController {
                 if let remote { accept(remote) }
                 else {
                     app.setCloudSummary(nil)
-                    status.title = "Waiting for a Mac"
-                    status.otherPublisherID = nil
+                    status.title = status.copyRemoved ? "Cloud copy removed" : "Waiting for a Mac"
+                    status.otherPublisherID = preferences.removedPublisherID
                 }
             }
         } catch {
@@ -291,6 +388,14 @@ final class PrivateCloudSyncController {
 
     private func accept(_ receipt: PrivateCloudReceipt) {
         guard receipt.accountID == preferences.accountID else { return }
+        if receipt.payload.isCleared {
+            acceptRemoved(receipt, requestedHere: false)
+            return
+        }
+        let wasRemoved = preferences.removedPublisherID != nil
+        preferences.removedPublisherID = nil
+        status.copyRemoved = false
+        status.removalContext = PrivateCloudRemovalContext(accountID: receipt.accountID, publisherID: receipt.payload.publisherID)
         status.verifiedAt = receipt.verifiedAt
         status.otherPublisherID = receipt.payload.publisherID == preferences.publisherID ? nil : receipt.payload.publisherID
         status.title = status.otherPublisherID == nil ? "Synced" : "Using another Mac"
@@ -298,13 +403,36 @@ final class PrivateCloudSyncController {
         do {
             let value = SavedSummary(accountID: receipt.accountID, payload: receipt.payload, verifiedAt: receipt.verifiedAt)
             try save(JSONEncoder().encode(value), to: summaryURL)
+            if wasRemoved { try savePreferences() }
         } catch { status.title = "Synced · couldn’t save local copy" }
+    }
+
+    private func acceptRemoved(_ receipt: PrivateCloudReceipt, requestedHere: Bool) {
+        guard receipt.accountID == preferences.accountID, receipt.payload.isCleared else { return }
+        cancelWork()
+        preferences.enabled = false
+        preferences.hasPublished = false
+        preferences.removedPublisherID = receipt.payload.publisherID
+        lastLocal = nil
+        status.enabled = false
+        status.copyRemoved = true
+        status.removalContext = nil
+        status.otherPublisherID = receipt.payload.publisherID
+        status.verifiedAt = receipt.verifiedAt
+        status.title = requestedHere ? "Cloud copy removed" : "Removed on another Mac"
+        app?.setCloudSummary(nil)
+        do {
+            try savePreferences()
+            try removeDisplayCaches()
+        } catch { status.title = "Cloud copy removed · couldn’t save local state" }
+        updateStatus()
     }
 
     private func loadCachedSummary(accountID: String) {
         guard app?.cloudSummary == nil,
               let data = try? Data(contentsOf: summaryURL), data.count <= CloudSyncSnapshot.maximumEncodedBytes + 2_048,
               let saved = try? JSONDecoder().decode(SavedSummary.self, from: data), saved.accountID == accountID,
+              !saved.payload.isCleared,
               saved.payload.publisherID != preferences.publisherID,
               (try? saved.payload.validate()) != nil else { return }
         app?.setCloudSummary(saved.payload.snapshot)
@@ -326,12 +454,19 @@ final class PrivateCloudSyncController {
     private func cancelWork() {
         generation = UUID()
         work?.cancel(); work = nil
+        removalWork?.cancel(); removalWork = nil
+        removingCopy = false
         delayedWork?.cancel(); delayedWork = nil
         pendingChange = false
         status.working = false
     }
 
     private func savePreferences() throws { try save(JSONEncoder().encode(preferences), to: preferencesURL) }
+    private func removeDisplayCaches() throws {
+        for url in [summaryURL, outboundURL] where FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
     private func save(_ data: Data, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])

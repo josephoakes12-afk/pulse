@@ -2,34 +2,48 @@ import AppKit
 import PulseCore
 import SwiftUI
 
+enum SettingsDestination: Hashable {
+    case connections, project(UUID), general, cloud
+}
+
 struct ConnectionsView: View {
     @ObservedObject var store: AppStore
-    var initialSelection: UUID? = nil
-    @State private var selectedID: UUID?
-    @State private var showingCloud = false
+    @State private var destination: SettingsDestination
+    @StateObject private var preferences = AppPreferences()
     @State private var editor: EditorItem?
     @State private var removeCandidate: ProjectConnection?
     @State private var error: String?
 
+    init(store: AppStore, initialDestination: SettingsDestination = .connections) {
+        self.store = store
+        _destination = State(initialValue: initialDestination)
+    }
+
+    private var selectedID: UUID? {
+        if case .project(let id) = destination { return id }
+        return nil
+    }
+
+    private func navigate(to requested: SettingsDestination) {
+        destination = requested == .connections ? store.connections.first.map { .project($0.id) } ?? .connections : requested
+    }
+
     var body: some View {
         NavigationSplitView {
-            List(selection: $selectedID) {
+            List(selection: $destination) {
                 Section("Connections") {
                     ForEach(store.connections) { project in
                         HStack(spacing: 8) {
                             iconButton(for: project, size: 22)
                             Text(project.name)
-                        }.tag(project.id).padding(.vertical, 3)
+                        }.tag(SettingsDestination.project(project.id)).padding(.vertical, 3)
                     }
                 }
                 Section {
-                    Button {
-                        selectedID = nil
-                        showingCloud = true
-                    } label: { Label("iCloud", systemImage: "icloud") }
-                    .buttonStyle(.plain)
-                    .listRowBackground(showingCloud ? Color.accentColor.opacity(0.12) : Color.clear)
-                    .accessibilityLabel("iCloud sync settings")
+                    Label("General", systemImage: "gearshape").tag(SettingsDestination.general)
+                        .accessibilityLabel("General settings")
+                    Label("iCloud", systemImage: "icloud").tag(SettingsDestination.cloud)
+                        .accessibilityLabel("iCloud sync settings")
                 }
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
@@ -41,7 +55,9 @@ struct ConnectionsView: View {
                 }.buttonStyle(.borderless).padding(12).background(.bar)
             }
         } detail: {
-            if showingCloud {
+            if destination == .general {
+                GeneralSettings(preferences: preferences)
+            } else if destination == .cloud {
                 PrivateCloudSyncSettings(store: store)
             } else if let project = store.connections.first(where: { $0.id == selectedID }) {
                 Form {
@@ -49,7 +65,7 @@ struct ConnectionsView: View {
                         LabeledContent("Connection", value: project.kind.title)
                         LabeledContent("Refresh", value: "Every \(project.intervalSeconds / 60) minutes")
                         LabeledContent("Status", value: !project.enabled ? "Paused" : store.errors[project.id] != nil ? "Needs attention" : store.snapshots[project.id] != nil ? "Connected" : "Waiting for data")
-                        if let snapshot = store.snapshots[project.id] {
+                        if let snapshot = store.snapshot(for: project.id) {
                             ForEach(snapshot.metrics) { metric in LabeledContent(metric.label, value: metric.value) }
                             LabeledContent("Last update") { Text(snapshot.fetchedAt, style: .relative).foregroundStyle(.secondary) }
                         }
@@ -90,18 +106,20 @@ struct ConnectionsView: View {
         .confirmationDialog("Remove \(removeCandidate?.name ?? "connection")?", isPresented: Binding(get: { removeCandidate != nil }, set: { if !$0 { removeCandidate = nil } })) {
             Button("Remove connection", role: .destructive) {
                 guard let project = removeCandidate else { return }
-                Task { do { try await store.remove(project); selectedID = nil } catch { self.error = error.localizedDescription }; removeCandidate = nil }
+                Task { do { try await store.remove(project); navigate(to: .connections) } catch { self.error = error.localizedDescription }; removeCandidate = nil }
             }
             Button("Cancel", role: .cancel) { removeCandidate = nil }
         } message: { Text("This removes its settings, saved counts and credential from this Mac.") }
         .alert("Couldn’t update connection", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") { error = nil } } message: { Text(error ?? "") }
         .onChange(of: store.connections) { _, connections in
-            if selectedID == nil { selectedID = connections.first?.id }
+            if destination == .connections || selectedID.map({ id in !connections.contains { $0.id == id } }) == true {
+                navigate(to: .connections)
+            }
         }
-        .onAppear { if selectedID == nil { selectedID = initialSelection ?? store.connections.first?.id } }
-        .onChange(of: selectedID) { _, id in if id != nil { showingCloud = false } }
-        .onReceive(NotificationCenter.default.publisher(for: .pulseSelectProject)) { if let id = $0.object as? UUID { showingCloud = false; selectedID = id } }
-        .onReceive(NotificationCenter.default.publisher(for: .pulseShowCloudSync)) { _ in selectedID = nil; showingCloud = true }
+        .onAppear { if destination == .connections { navigate(to: .connections) } }
+        .onReceive(NotificationCenter.default.publisher(for: .pulseShowSettings)) {
+            if let requested = $0.object as? SettingsDestination { navigate(to: requested) }
+        }
     }
 
     private var localDataSection: some View {
@@ -179,12 +197,47 @@ struct CredentialEditor: View {
 }
 
 extension Notification.Name {
-    static let pulseSelectProject = Notification.Name("local.pulse.select-project")
-    static let pulseShowCloudSync = Notification.Name("local.pulse.show-cloud-sync")
+    static let pulseShowSettings = Notification.Name("local.pulse.show-settings")
+}
+
+private struct GeneralSettings: View {
+    @ObservedObject var preferences: AppPreferences
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Open at Login", isOn: Binding(get: { preferences.openAtLogin }, set: { enabled in
+                    Task { await preferences.setOpenAtLogin(enabled) }
+                })).disabled(preferences.loginBusy || !preferences.canConfigureLoginItem)
+                if preferences.loginRequiresApproval || (preferences.canConfigureLoginItem && preferences.loginMessage != nil) {
+                    Button("Open Login Items…") { preferences.openLoginItemsSettings() }
+                }
+                if let message = preferences.loginMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+            } header: { Text("General").font(.title3.weight(.semibold)) }
+            Section {
+                LabeledContent("Version", value: preferences.versionLabel)
+                HStack {
+                    Button("Check for Updates") { Task { await preferences.checkForUpdates() } }
+                        .disabled(preferences.checkingForUpdates)
+                    if preferences.checkingForUpdates { ProgressView().controlSize(.small) }
+                    if preferences.availableReleaseURL != nil {
+                        Button("Download…") { preferences.openAvailableRelease() }
+                    }
+                }
+                if let message = preferences.updateMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }.formStyle(.grouped)
+        .onAppear { preferences.refreshLoginStatus() }
+    }
 }
 
 private struct PrivateCloudSyncSettings: View {
     @ObservedObject var store: AppStore
+    @State private var removalContext: PrivateCloudRemovalContext?
+    @State private var removalError: String?
     var body: some View {
         Form {
             Section {
@@ -202,17 +255,41 @@ private struct PrivateCloudSyncSettings: View {
                 }
                 if store.cloudSyncStatus.needsAccountApproval {
                     Button("Use this Apple Account") { Task { await store.setCloudSyncEnabled(true) } }
-                } else if store.cloudSyncStatus.enabled {
+                } else if store.cloudSyncStatus.enabled || (store.cloudSyncStatus.copyRemoved && !store.connections.isEmpty) {
                     HStack {
-                        Button("Sync now") { store.syncCloudNow() }.disabled(store.cloudSyncStatus.working)
-                        if store.cloudSyncStatus.otherPublisherID != nil, !store.connections.isEmpty {
+                        if store.cloudSyncStatus.enabled {
+                            Button("Sync now") { store.syncCloudNow() }.disabled(store.cloudSyncStatus.working)
+                        }
+                        if store.cloudSyncStatus.otherPublisherID != nil || store.cloudSyncStatus.copyRemoved, !store.connections.isEmpty {
                             Button("Use this Mac") { store.useThisMacForCloud() }.disabled(store.cloudSyncStatus.working)
                         }
                     }
                 }
+                if store.cloudSyncStatus.canRemoveCopy {
+                    Button("Remove iCloud copy…", role: .destructive) {
+                        removalContext = store.cloudSyncStatus.removalContext
+                    }.disabled(store.cloudSyncStatus.working)
+                }
             } header: { Text("iCloud").font(.title3.weight(.semibold)) }
             footer: { Text("Summary numbers and selected KPIs. Credentials stay on this Mac.") }
         }.formStyle(.grouped)
+        .confirmationDialog("Remove iCloud copy?", isPresented: Binding(get: { removalContext != nil }, set: { if !$0 { removalContext = nil } })) {
+            if let context = removalContext {
+                Button("Remove iCloud copy", role: .destructive) {
+                    removalContext = nil
+                    Task {
+                        do { try await store.removeCloudCopy(context: context) }
+                        catch { removalError = error.localizedDescription }
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) { removalContext = nil }
+        } message: {
+            Text("Removes synced numbers and pauses uploads from your Macs. Local connections stay saved.")
+        }
+        .alert("Couldn’t remove iCloud copy", isPresented: Binding(get: { removalError != nil }, set: { if !$0 { removalError = nil } })) {
+            Button("OK") { removalError = nil }
+        } message: { Text(removalError ?? "") }
     }
 }
 

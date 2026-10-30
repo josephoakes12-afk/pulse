@@ -109,7 +109,7 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         completionHandler()
     }
 
-    @objc private func showConnections() { AppWindows.showConnections(store: .shared) }
+    @objc private func showConnections() { AppWindows.showGeneralSettings(store: .shared) }
     @objc private func addProject() { AppWindows.showAddProject(store: .shared) }
 
     private func configureMenus() {
@@ -158,23 +158,29 @@ enum AppWindows {
     }
 
     static func showConnections(store: AppStore, selecting projectID: UUID? = nil) {
+        showSettings(store: store, destination: projectID.map { .project($0) } ?? .connections)
+    }
+
+    private static func showSettings(store: AppStore, destination: SettingsDestination) {
         if connections == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 470), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "Pulse Settings"
-            window.contentView = NSHostingView(rootView: ConnectionsView(store: store, initialSelection: projectID))
+            window.contentView = NSHostingView(rootView: ConnectionsView(store: store, initialDestination: destination))
             window.minSize = NSSize(width: 600, height: 440)
             window.isReleasedWhenClosed = false
             window.center()
             connections = window
-        }
+        } else { NotificationCenter.default.post(name: .pulseShowSettings, object: destination) }
         connections?.makeKeyAndOrderFront(nil)
-        if let projectID { NotificationCenter.default.post(name: .pulseSelectProject, object: projectID) }
         NSApp.activate(ignoringOtherApps: true)
     }
 
     static func showCloudSync(store: AppStore) {
-        showConnections(store: store)
-        DispatchQueue.main.async { NotificationCenter.default.post(name: .pulseShowCloudSync, object: nil) }
+        showSettings(store: store, destination: .cloud)
+    }
+
+    static func showGeneralSettings(store: AppStore) {
+        showSettings(store: store, destination: .general)
     }
 
     static func showPreview(store: AppStore) {

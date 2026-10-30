@@ -126,6 +126,7 @@ actor PrivateCloudTransport {
     func publish(_ payload: CloudSyncSnapshot, expectedAccountID: String,
                  replacingPublisherID: UUID? = nil) async throws -> PrivateCloudReceipt {
         do {
+            guard !payload.isCleared else { throw PrivateCloudTransportError.invalidPayload }
             let data = try payload.encoded()
             try await requireAccount(expectedAccountID)
             for attempt in 0...2 {
@@ -133,7 +134,7 @@ actor PrivateCloudTransport {
                 let currentRecord = try await fetchRecord()
                 if let currentRecord {
                     let current = try decodedPayload(currentRecord)
-                    if current.publisherID != payload.publisherID {
+                    if current.isCleared || current.publisherID != payload.publisherID {
                         guard replacingPublisherID == current.publisherID else {
                             throw PrivateCloudTransportError.anotherPublisher(current.publisherID)
                         }
@@ -163,6 +164,48 @@ actor PrivateCloudTransport {
                 }
                 guard verifiedPayload == payload || verifiedPayload.snapshot.generatedAt > payload.snapshot.generatedAt else {
                     throw PrivateCloudTransportError.conflict
+                }
+                try await requireAccount(expectedAccountID)
+                return receipt(verified, payload: verifiedPayload, accountID: expectedAccountID)
+            }
+            throw PrivateCloudTransportError.conflict
+        } catch { throw sanitized(error) }
+    }
+
+    /// Clearing uses the same change-tag check as publication. CloudKit's
+    /// record-ID deletion API has no change-tag precondition, so keep a tiny
+    /// empty marker rather than risk deleting a different Mac's new summary.
+    func removeCopy(expectedAccountID: String, confirmedPublisherID: UUID) async throws -> PrivateCloudReceipt {
+        do {
+            try await requireAccount(expectedAccountID)
+            let fenceID = UUID()
+            for attempt in 0...2 {
+                try Task.checkCancellation()
+                let current = try await fetchRecord()
+                let existing = try current.map(decodedPayload)
+                if let existing, existing.isCleared {
+                    try await requireAccount(expectedAccountID)
+                    return receipt(current!, payload: existing, accountID: expectedAccountID)
+                }
+                let marker: CloudSyncSnapshot
+                do {
+                    marker = try CloudSyncRemovalPolicy.marker(current: existing,
+                        confirmedPublisherID: confirmedPublisherID, removalPublisherID: fenceID)
+                } catch CloudSyncSnapshotError.publisherMismatch {
+                    throw PrivateCloudTransportError.anotherPublisher(existing!.publisherID)
+                }
+                let record = current ?? CKRecord(recordType: Self.recordType, recordID: recordID)
+                record[Self.payloadField] = try marker.encoded() as NSData
+                try await requireAccount(expectedAccountID)
+                do { try await saveRecord(record) }
+                catch {
+                    if Self.isConflict(error), attempt < 2 { continue }
+                    throw error
+                }
+                guard let verified = try await fetchRecord() else { throw PrivateCloudTransportError.invalidPayload }
+                let verifiedPayload = try decodedPayload(verified)
+                guard verifiedPayload.isCleared else {
+                    throw PrivateCloudTransportError.anotherPublisher(verifiedPayload.publisherID)
                 }
                 try await requireAccount(expectedAccountID)
                 return receipt(verified, payload: verifiedPayload, accountID: expectedAccountID)
