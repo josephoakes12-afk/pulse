@@ -1,0 +1,171 @@
+import Foundation
+import CoreFoundation
+
+/// Values are mapped with simple dotted paths, e.g. `stats.readers` or `items.0.count`.
+/// Responses and credentials never appear in user-facing errors.
+public struct HTTPConnector: SummaryConnector {
+    public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
+    private let transport: Transport
+    public static let maximumResponseBytes = 1_048_576
+
+    public init() { transport = { request in try await Self.fetch(request) } }
+    public init(transport: @escaping Transport) { self.transport = transport }
+
+    public func collect(connection: ProjectConnection, secret: String?) async throws -> ProjectSnapshot {
+        try ConnectorValidation.validate(connection)
+        guard let url = URL(string: connection.endpoint) else { throw PulseError.invalidConfiguration("Enter a valid endpoint URL.") }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let secret, !secret.isEmpty {
+            guard !secret.contains("\r"), !secret.contains("\n") else { throw PulseError.invalidConfiguration("The credential contains an invalid line break.") }
+            request.setValue(secret, forHTTPHeaderField: connection.authHeader)
+        }
+        let data: Data
+        let response: HTTPURLResponse
+        do { (data, response) = try await transport(request) }
+        catch is CancellationError { throw CancellationError() }
+        catch let error as PulseError { throw error }
+        catch { throw PulseError.response("Couldn’t reach the endpoint. Check your connection and try again.") }
+        guard (200..<300).contains(response.statusCode) else {
+            if response.statusCode == 401 || response.statusCode == 403 { throw PulseError.response("Access denied. Check the saved credential and endpoint permissions.") }
+            if (300..<400).contains(response.statusCode) { throw PulseError.response("The endpoint redirected. Enter its final URL instead.") }
+            if response.statusCode == 429 { throw PulseError.response("The service is limiting requests. Try a longer refresh interval.") }
+            throw PulseError.response("The service returned HTTP \(response.statusCode). Try again later.")
+        }
+        return try Self.snapshot(data: data, connection: connection)
+    }
+
+    public static func snapshot(data: Data, connection: ProjectConnection, now: Date = Date()) throws -> ProjectSnapshot {
+        guard data.count <= maximumResponseBytes else { throw PulseError.response("The response is too large. Use a small summary endpoint.") }
+        guard let root = try? JSONSerialization.jsonObject(with: data), let object = root as? [String: Any] else {
+            throw PulseError.response("The endpoint must return a JSON object.")
+        }
+        let values = try connection.metrics.map { definition in
+            let value = try scalar(at: definition.path, in: object)
+            return MetricValue(id: definition.id, label: definition.label, value: value)
+        }
+        var measuredAt = now
+        if let rawDate = object["measuredAt"] ?? object["measured_at"] ?? object["measuredat"] {
+            guard let text = rawDate as? String, let date = parseDate(text), date <= now.addingTimeInterval(300) else {
+                throw PulseError.response("The summary has an invalid measurement date.")
+            }
+            measuredAt = date
+        }
+        let coverage = (object["coverage"] as? String).map { String($0.prefix(160)) }
+        var events: [PulseEvent] = []
+        if let rawEvents = object["events"] {
+            guard let rows = rawEvents as? [[String: Any]], rows.count <= 1_000 else { throw PulseError.response("The events field must contain at most 1,000 events.") }
+            var eventIDs: Set<String> = []
+            for row in rows {
+                guard let id = row["id"] as? String, !id.isEmpty, id.count <= 200,
+                      let title = row["title"] as? String, !title.isEmpty, title.count <= 300,
+                      let dateString = (row["occurredAt"] ?? row["occurred_at"]) as? String, let date = parseDate(dateString), date <= now.addingTimeInterval(300)
+                else { throw PulseError.response("Each event needs a stable ID, a short title and an ISO 8601 date.") }
+                if eventIDs.insert(id).inserted {
+                    let link = (row["url"] as? String).flatMap { safeLink($0) }
+                    events.append(PulseEvent(id: id, title: title, occurredAt: date, url: link))
+                }
+            }
+        }
+        return ProjectSnapshot(projectID: connection.id, metrics: values, events: events.sorted { $0.occurredAt < $1.occurredAt }, measuredAt: measuredAt, fetchedAt: now, coverage: coverage)
+    }
+
+    private static func scalar(at path: String, in root: [String: Any]) throws -> String {
+        var current: Any = root
+        for component in path.split(separator: ".", omittingEmptySubsequences: false) {
+            if let dictionary = current as? [String: Any], let next = dictionary[String(component)] { current = next }
+            else if let array = current as? [Any], let index = Int(component), array.indices.contains(index) { current = array[index] }
+            else { throw PulseError.response("A selected metric is missing. Check its JSON path.") }
+        }
+        if let string = current as? String {
+            guard string.count <= 120 else { throw PulseError.response("A metric is too long. Return a short value.") }
+            return string
+        }
+        if let number = current as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue ? "Yes" : "No" }
+            guard number.doubleValue.isFinite else { throw PulseError.response("A metric must be a finite number.") }
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            formatter.maximumFractionDigits = 4
+            return formatter.string(from: number) ?? number.stringValue
+        }
+        throw PulseError.response("A selected metric isn’t a number or short text value.")
+    }
+
+    public static func parseDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
+
+    public static func safeLink(_ value: String) -> String? {
+        guard let url = URL(string: value), let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["https", "http"].contains(parts.scheme?.lowercased() ?? ""), parts.host != nil,
+              parts.user == nil, parts.password == nil else { return nil }
+        return url.absoluteString
+    }
+
+    private static func fetch(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 20
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        configuration.urlCache = nil
+        let session = URLSession(configuration: configuration, delegate: NoRedirectDelegate(), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (bytes, rawResponse) = try await session.bytes(for: request)
+        guard let response = rawResponse as? HTTPURLResponse else { throw PulseError.response("The service didn’t return an HTTP response.") }
+        guard response.expectedContentLength <= maximumResponseBytes else { throw PulseError.response("The response is too large. Use a small summary endpoint.") }
+        var data = Data()
+        for try await byte in bytes {
+            guard data.count < maximumResponseBytes else { throw PulseError.response("The response is too large. Use a small summary endpoint.") }
+            data.append(byte)
+        }
+        return (data, response)
+    }
+}
+
+private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) { completionHandler(nil) }
+}
+
+public enum ConnectorValidation {
+    public static func validate(_ connection: ProjectConnection) throws {
+        guard !connection.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, connection.name.count <= 60 else { throw PulseError.invalidConfiguration("Give the project a name of up to 60 characters.") }
+        guard (1...3).contains(connection.metrics.count), connection.metrics.allSatisfy({ !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.label.count <= 40 && !$0.path.isEmpty && $0.path.count <= 128 && !$0.path.split(separator: ".", omittingEmptySubsequences: false).contains("") }) else { throw PulseError.invalidConfiguration("Add one to three metrics, each with a short label and a value path.") }
+        guard (60...86_400).contains(connection.intervalSeconds) else { throw PulseError.invalidConfiguration("Choose a refresh interval between one minute and one day.") }
+        guard let parts = URLComponents(string: connection.endpoint), let host = parts.host, !host.isEmpty,
+              parts.password == nil, parts.fragment == nil else { throw PulseError.invalidConfiguration("Enter a valid endpoint. Save credentials separately.") }
+        if connection.kind == .http {
+            let scheme = parts.scheme?.lowercased()
+            guard (scheme == "https" || (scheme == "http" && isLoopback(host))), parts.user == nil else { throw PulseError.invalidConfiguration("Use HTTPS, or HTTP on localhost. Save credentials separately.") }
+            let secretKeys = ["key", "api_key", "apikey", "token", "access_token", "password", "secret", "authorization", "signature"]
+            guard !(parts.queryItems ?? []).contains(where: { secretKeys.contains($0.name.lowercased()) }) else { throw PulseError.invalidConfiguration("Move the credential out of the URL and into the secure credential field.") }
+            let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+            guard !connection.authHeader.isEmpty, connection.authHeader.unicodeScalars.allSatisfy(allowed.contains), !["host", "content-length", "connection", "cookie"].contains(connection.authHeader.lowercased()) else { throw PulseError.invalidConfiguration("Enter a valid authentication header name.") }
+        } else {
+            guard ["postgres", "postgresql"].contains(parts.scheme?.lowercased() ?? ""), let user = parts.user, !user.isEmpty, parts.path.count > 1, (parts.port ?? 5432) > 0, (parts.port ?? 5432) <= 65535 else { throw PulseError.invalidConfiguration("Use postgresql://user@host:5432/database, with the password saved separately.") }
+            let items = parts.queryItems ?? []
+            guard items.allSatisfy({ $0.name == "sslmode" && ["require", "verify-full", "disable"].contains($0.value ?? "") }), !items.contains(where: { $0.value == "disable" && !isLoopback(host) }) else { throw PulseError.invalidConfiguration("Remote databases require verified TLS. Only sslmode=require or verify-full is supported remotely.") }
+            try validatePostgresQuery(connection.query)
+        }
+    }
+
+    /// This is an early UX guard. The database transaction is always READ ONLY;
+    /// a restricted read-only database role is still required for least privilege.
+    public static func validatePostgresQuery(_ query: String) throws {
+        let sql = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let first = sql.split(whereSeparator: { $0.isWhitespace || $0 == "(" }).first?.uppercased()
+        guard sql.count <= 16_384, ["SELECT", "WITH"].contains(first ?? ""), !sql.contains(";"), !sql.contains("--"), !sql.contains("/*"), !sql.contains("*/") else { throw PulseError.invalidConfiguration("Use one SELECT or WITH query without semicolons or SQL comments.") }
+        let blocked = #"(?i)\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|TRUNCATE|COPY|CALL|DO|GRANT|REVOKE|SET|RESET|COMMIT|ROLLBACK|VACUUM|INTO|FOR\s+UPDATE|FOR\s+SHARE)\b"#
+        guard sql.range(of: blocked, options: .regularExpression) == nil else { throw PulseError.invalidConfiguration("Only read-only aggregate SELECT queries are supported.") }
+        let sideEffects = #"(?i)\b(set_config|nextval|setval|pg_notify|pg_sleep|pg_advisory_lock|pg_advisory_xact_lock|pg_try_advisory_lock|pg_read_file|pg_read_binary_file|pg_write_file|pg_cancel_backend|pg_terminate_backend|lo_import|lo_export|dblink|dblink_exec)\s*\("#
+        guard sql.range(of: sideEffects, options: .regularExpression) == nil else { throw PulseError.invalidConfiguration("Use a summary query without session changes or side-effect functions.") }
+    }
+
+    public static func isLoopback(_ host: String) -> Bool { ["localhost", "127.0.0.1", "::1", "[::1]"].contains(host.lowercased()) }
+}

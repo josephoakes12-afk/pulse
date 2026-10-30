@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pulse HTTP summary",
+  "description": "Metrics may be scalar values anywhere in the object, selected by dot paths. These optional fields add timing, scope and new-event alerts.",
+  "type": "object",
+  "properties": {
+    "measuredAt": { "type": "string", "format": "date-time" },
+    "coverage": { "type": "string", "maxLength": 160 },
+    "events": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "occurredAt"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "url": { "type": "string", "format": "uri", "pattern": "^https?://" }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

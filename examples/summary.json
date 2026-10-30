@@ -1,0 +1,16 @@
+{
+  "measuredAt": "2026-10-30T09:00:00Z",
+  "coverage": "Example data",
+  "metrics": {
+    "accounts": 12,
+    "bookings7d": 38
+  },
+  "events": [
+    {
+      "id": "business-created:demo-001",
+      "title": "New business: Oak Studio",
+      "occurredAt": "2026-10-30T08:45:00Z",
+      "url": "https://example.com/businesses/demo-001"
+    }
+  ]
+}
