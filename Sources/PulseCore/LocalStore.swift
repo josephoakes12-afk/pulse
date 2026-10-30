@@ -21,7 +21,7 @@ public actor LocalStore {
         try database.execute("PRAGMA secure_delete = ON")
         try database.execute("PRAGMA busy_timeout = 3000")
         let version = try database.rows("PRAGMA user_version").first?["user_version"]?.integer ?? 0
-        guard version <= 2 else { throw PulseError.storage("This cache was created by a newer version of Pulse.") }
+        guard version <= 3 else { throw PulseError.storage("This cache was created by a newer version of Pulse.") }
         try database.transaction {
             try database.execute("CREATE TABLE IF NOT EXISTS connections (id TEXT PRIMARY KEY, position INTEGER NOT NULL, payload TEXT NOT NULL)")
             try database.execute("CREATE TABLE IF NOT EXISTS snapshots (project_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
@@ -29,7 +29,8 @@ public actor LocalStore {
             try database.execute("CREATE TABLE IF NOT EXISTS events (project_id TEXT NOT NULL, event_id TEXT NOT NULL, occurred_at REAL NOT NULL, payload TEXT NOT NULL, pending INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (project_id, event_id))")
             try database.execute("CREATE INDEX IF NOT EXISTS events_recent ON events (project_id, occurred_at DESC)")
             try database.execute("CREATE TABLE IF NOT EXISTS alert_state (project_id TEXT NOT NULL, observation_key TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (project_id, observation_key))")
-            try database.execute("PRAGMA user_version = 2")
+            try database.execute("CREATE TABLE IF NOT EXISTS presentation_state (project_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+            try database.execute("PRAGMA user_version = 3")
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: databaseURL.path)
     }
@@ -93,6 +94,39 @@ public actor LocalStore {
     public func loadSnapshots() throws -> [ProjectSnapshot] {
         try database.rows("SELECT payload FROM snapshots ORDER BY project_id").map {
             try decode(ProjectSnapshot.self, row: $0)
+        }
+    }
+
+    public func loadMetricVisibility() throws -> [UUID: MetricVisibility] {
+        var result: [UUID: MetricVisibility] = [:]
+        for row in try database.rows("SELECT project_id, payload FROM presentation_state") {
+            guard let identifier = row["project_id"]?.text, let projectID = UUID(uuidString: identifier) else {
+                throw PulseError.storage("The local cache contains an unreadable entry.")
+            }
+            result[projectID] = try decode(MetricVisibility.self, row: row)
+        }
+        return result
+    }
+
+    public func metricVisibility(projectID: UUID) throws -> MetricVisibility {
+        guard let row = try database.rows("SELECT payload FROM presentation_state WHERE project_id = ?",
+                                          [.text(projectID.uuidString)]).first else { return MetricVisibility() }
+        return try decode(MetricVisibility.self, row: row)
+    }
+
+    /// Presentation writes are independent of connection configuration and never
+    /// invalidate an in-flight collection or its quiet notification baseline.
+    public func saveMetricVisibility(_ visibility: MetricVisibility, projectID: UUID) throws {
+        try database.transaction {
+            guard try database.rows("SELECT id FROM connections WHERE id = ?", [.text(projectID.uuidString)]).first != nil else {
+                throw PulseError.invalidConfiguration("This connection has been removed.")
+            }
+            if visibility.hiddenMetricIDs.isEmpty {
+                try database.execute("DELETE FROM presentation_state WHERE project_id = ?", [.text(projectID.uuidString)])
+            } else {
+                try database.execute("INSERT INTO presentation_state (project_id, payload) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET payload = excluded.payload",
+                                     [.text(projectID.uuidString), .text(try json(visibility))])
+            }
         }
     }
 
@@ -189,6 +223,7 @@ public actor LocalStore {
 
     private func removeProjectRows(_ id: String) throws {
         try database.execute("DELETE FROM connections WHERE id = ?", [.text(id)])
+        try database.execute("DELETE FROM presentation_state WHERE project_id = ?", [.text(id)])
         try removeCachedProjectRows(id)
     }
 

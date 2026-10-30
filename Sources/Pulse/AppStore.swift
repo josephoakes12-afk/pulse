@@ -12,6 +12,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var errors: [UUID: String] = [:]
     @Published private(set) var refreshing: Set<UUID> = []
     @Published private(set) var recentEvents: [UUID: [PulseEvent]] = [:]
+    @Published private(set) var metricVisibilities: [UUID: MetricVisibility] = [:]
     @Published var storageError: String?
     @Published var showExamples: Bool = true
     @Published private(set) var selectedRange: MetricTimeRange = .last7Days
@@ -26,6 +27,7 @@ final class AppStore: ObservableObject {
     private var isMutating = false
     private var inspectedConnections: Set<String> = []
     private var pendingRangeReveals: [UUID: MetricTimeRange] = [:]
+    private var visibilityWrites: [UUID: (id: UUID, task: Task<Void, Error>)] = [:]
 
     var isDemo: Bool { connections.isEmpty && showExamples }
     var displayedConnections: [ProjectConnection] {
@@ -66,6 +68,7 @@ final class AppStore: ObservableObject {
         started = true
         do {
             connections = try await storage.loadConnections()
+            metricVisibilities = try await storage.loadMetricVisibility()
             snapshots = Dictionary(uniqueKeysWithValues: try await storage.loadSnapshots().map { ($0.projectID, $0) })
             await loadEvents()
         } catch { storageError = error.localizedDescription }
@@ -86,11 +89,68 @@ final class AppStore: ObservableObject {
     }
 
     func snapshot(for id: UUID) -> ProjectSnapshot? {
+        sourceSnapshot(for: id)?.applyingVisibility(metricVisibilities[id] ?? MetricVisibility())
+    }
+
+    func sourceSnapshot(for id: UUID) -> ProjectSnapshot? {
         rawSnapshot(for: id)?.forRange(selectedRange)
     }
 
     func rawSnapshot(for id: UUID) -> ProjectSnapshot? {
         isDemo ? DemoMetricRanges.snapshots().first(where: { $0.projectID == id }) : snapshots[id]
+    }
+
+    func metricIsVisible(_ metricID: UUID, projectID: UUID) -> Bool {
+        let source = sourceSnapshot(for: projectID) ?? rawSnapshot(for: projectID)
+        guard let source else { return true }
+        let display = source.applyingVisibility(metricVisibilities[projectID] ?? MetricVisibility())
+        return display.metrics.contains { $0.id == metricID } || (display.details ?? []).contains { $0.id == metricID }
+    }
+
+    func canHideMetric(_ metricID: UUID, projectID: UUID) -> Bool {
+        guard let source = sourceSnapshot(for: projectID) ?? rawSnapshot(for: projectID),
+              source.metrics.contains(where: { $0.id == metricID }) else { return true }
+        let display = source.applyingVisibility(metricVisibilities[projectID] ?? MetricVisibility())
+        return !display.metrics.contains(where: { $0.id == metricID }) || display.metrics.count > 1
+    }
+
+    func setMetricVisible(_ visible: Bool, metricID: UUID, projectID: UUID) async throws {
+        guard isDemo || connections.contains(where: { $0.id == projectID }),
+              let source = sourceSnapshot(for: projectID) ?? rawSnapshot(for: projectID),
+              (source.metrics + (source.details ?? [])).contains(where: { $0.id == metricID }) else {
+            throw PulseError.invalidConfiguration("This number is no longer available.")
+        }
+        guard visible || canHideMetric(metricID, projectID: projectID) else { return }
+        var next = metricVisibilities[projectID] ?? MetricVisibility()
+        if visible { next.hiddenMetricIDs.remove(metricID) }
+        else { next.hiddenMetricIDs.insert(metricID) }
+        // Update immediately so successive menu choices build on the last one.
+        metricVisibilities[projectID] = next
+        if isDemo { return }
+        guard let storage else { throw PulseError.storage("Local storage is unavailable.") }
+        let previous = visibilityWrites[projectID]?.task
+        let writeID = UUID()
+        let write = Task {
+            _ = try? await previous?.value
+            try await storage.saveMetricVisibility(next, projectID: projectID)
+        }
+        visibilityWrites[projectID] = (writeID, write)
+        do {
+            try await write.value
+            if visibilityWrites[projectID]?.id == writeID { visibilityWrites.removeValue(forKey: projectID) }
+        } catch {
+            // Reload only if a newer selection or removal has not superseded it.
+            if visibilityWrites[projectID]?.id == writeID {
+                let persisted = try? await storage.metricVisibility(projectID: projectID)
+                if visibilityWrites[projectID]?.id == writeID {
+                    visibilityWrites.removeValue(forKey: projectID)
+                    if connections.contains(where: { $0.id == projectID }) {
+                        metricVisibilities[projectID] = persisted ?? MetricVisibility()
+                    }
+                }
+            }
+            throw error
+        }
     }
 
     func selectRange(_ range: MetricTimeRange) {
@@ -302,6 +362,8 @@ final class AppStore: ObservableObject {
         snapshots.removeValue(forKey: connection.id)
         errors.removeValue(forKey: connection.id)
         recentEvents.removeValue(forKey: connection.id)
+        metricVisibilities.removeValue(forKey: connection.id)
+        visibilityWrites.removeValue(forKey: connection.id)
     }
 
     func loadEvents() async {

@@ -6,7 +6,8 @@ struct PulsePanel: View {
     @ObservedObject var store: AppStore
     @State private var expanded: UUID?
     @State private var hovered: UUID?
-    @State private var iconError: String?
+    @State private var viewError: String?
+    @State private var errorTitle = "Couldn’t save changes"
     @State private var infoProject: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -16,9 +17,15 @@ struct PulsePanel: View {
                 expanded = nil
                 infoProject = nil
             }
-            .alert("Couldn’t change icon", isPresented: Binding(get: { iconError != nil }, set: { if !$0 { iconError = nil } })) {
-                Button("OK") { iconError = nil }
-            } message: { Text(iconError ?? "") }
+            .onChange(of: store.metricVisibilities) { _, _ in
+                if let expanded, let snapshot = store.snapshot(for: expanded),
+                   (snapshot.details ?? []).isEmpty, (snapshot.breakdowns ?? []).isEmpty {
+                    self.expanded = nil
+                }
+            }
+            .alert(errorTitle, isPresented: Binding(get: { viewError != nil }, set: { if !$0 { viewError = nil } })) {
+                Button("OK") { viewError = nil }
+            } message: { Text(viewError ?? "") }
     }
 
     private var panelContent: some View {
@@ -120,7 +127,7 @@ struct PulsePanel: View {
                 ConnectionIconButton(symbol: project.symbol, imageData: project.iconImageData) { symbol, imageData in
                     Task {
                         do { try await store.updateIcon(projectID: project.id, symbol: symbol, imageData: imageData) }
-                        catch { iconError = error.localizedDescription }
+                        catch { errorTitle = "Couldn’t change icon"; viewError = error.localizedDescription }
                     }
                 }.accessibilityLabel("Change \(project.name) icon")
                 VStack(alignment: .leading, spacing: 7) {
@@ -130,15 +137,8 @@ struct PulsePanel: View {
                         if !project.enabled { Image(systemName: "pause.circle").font(.system(size: 11)).foregroundStyle(.secondary).help("Paused") }
                         else if let error = store.errors[project.id] { Image(systemName: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(.orange).help(error).accessibilityLabel("Connection needs attention") }
                         else if let snapshot, !store.isDemo, Date().timeIntervalSince(snapshot.measuredAt) > Double(project.intervalSeconds * 3) { Image(systemName: "clock").font(.system(size: 11)).foregroundStyle(.orange).help("Data is older than expected") }
-                        else if let coverage = snapshot?.coverage ?? rawSnapshot?.coverage, !store.isDemo {
-                            Button { infoProject = infoProject == project.id ? nil : project.id } label: {
-                                Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary)
-                                    .frame(width: 18, height: 18).contentShape(Rectangle())
-                            }.buttonStyle(.plain).help("About this data").accessibilityLabel("About \(project.name) data")
-                                .popover(isPresented: Binding(get: { infoProject == project.id }, set: { if !$0, infoProject == project.id { infoProject = nil } }), arrowEdge: .trailing) {
-                                    Text(coverage).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
-                                        .textSelection(.enabled).frame(width: 250, alignment: .leading).padding(14)
-                                }
+                        if let source = store.sourceSnapshot(for: project.id) ?? rawSnapshot {
+                            metricMenu(project, source: source)
                         }
                         if hasDetails {
                             Button {
@@ -166,6 +166,52 @@ struct PulsePanel: View {
                 }.padding(.leading, 65).padding(.trailing, 20)
             }
         }
+    }
+
+    private func metricMenu(_ project: ProjectConnection, source: ProjectSnapshot) -> some View {
+        Menu {
+            Section("Headline") {
+                ForEach(source.metrics) { metric in
+                    metricToggle(metric, projectID: project.id)
+                }
+            }
+            if let details = source.details, !details.isEmpty {
+                Section("More") {
+                    ForEach(details) { metric in
+                        metricToggle(metric, projectID: project.id)
+                    }
+                }
+            }
+            if source.coverage != nil {
+                Divider()
+                Button("About this data") {
+                    // Present after the native menu has finished tracking.
+                    DispatchQueue.main.async { infoProject = project.id }
+                }
+            }
+        } label: {
+            Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary)
+                .frame(width: 18, height: 18).contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("Choose KPIs").accessibilityLabel("\(project.name) KPIs")
+        .popover(isPresented: Binding(get: { infoProject == project.id }, set: { if !$0, infoProject == project.id { infoProject = nil } }), arrowEdge: .trailing) {
+            Text(source.coverage ?? "").font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled).frame(width: 250, alignment: .leading).padding(14)
+        }
+    }
+
+    private func metricToggle(_ metric: MetricValue, projectID: UUID) -> some View {
+        Toggle(metric.label, isOn: Binding(
+            get: { store.metricIsVisible(metric.id, projectID: projectID) },
+            set: { visible in
+                Task {
+                    do { try await store.setMetricVisible(visible, metricID: metric.id, projectID: projectID) }
+                    catch { errorTitle = "Couldn’t save KPIs"; viewError = error.localizedDescription }
+                }
+            }
+        ))
+        .disabled(!store.canHideMetric(metric.id, projectID: projectID))
     }
 
     @ViewBuilder private func projectName(_ project: ProjectConnection) -> some View {

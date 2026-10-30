@@ -18,7 +18,7 @@ macOS 14 or later · Apple silicon and Intel
 2. Click **+**, paste your connection details, and add its credential.
 3. Choose your metrics and click **Add Project**.
 
-Use the range menu for **24h · 7d · 30d · Lifetime**. Expand a project’s arrow for extra numbers. Click its name to open the source, or its icon to change it.
+Use the range menu for **24h · 7d · 30d · Lifetime**. Click **ⓘ** to show or hide KPIs, or the arrow for extra numbers. Click a project’s name to open the source, or its icon to change it.
 
 Optional native alerts report new activity. Use **Test alert** in Settings to check them.
 
