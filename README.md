@@ -15,15 +15,23 @@ scripts/run.sh
 
 The build script creates `build/Pulse.app` and signs it locally for development. It does not install a background service, publish a release, or notarize the app for distribution. To build without opening it, run `scripts/build-app.sh`. Use `scripts/run.sh debug` for a faster development build.
 
+## Add a project
+
+Click **Add Project**, paste the API URL or database connection details, and enter its credential if needed. Connect to preview the available numbers, choose up to three, then add the project. Custom paths, queries and other settings remain available in Advanced.
+
+For an existing project, open its settings and choose **Credentials…** to add or replace the token or password without editing the rest of its setup.
+
+For a reusable setup, import a project file such as [examples/project.pulse.json](examples/project.pulse.json). It contains only connection settings and metric definitions; enter credentials separately. Importing a file never contacts its endpoint or saves a project automatically.
+
 ## Connect a service
 
-Open Pulse from the menu bar, then open Connections and add a project. Choose the connection type, supply its details, and name up to three metrics. The default refresh interval is five minutes.
+The guided setup detects API numbers or lists readable database tables and views. Database selections count rows; custom filters and queries remain in Advanced. The default refresh interval is five minutes.
 
 ### HTTP / JSON
 
 Enter an HTTPS endpoint returning a JSON object. HTTP is permitted for loopback addresses during local development. Each metric maps a label to a dot path such as `metrics.accounts` or `results.0.total`.
 
-If authentication is needed, choose the header name and enter its exact value in the secret field; for bearer authentication that means `Bearer YOUR_TOKEN`. Secrets are stored in macOS Keychain. Avoid putting tokens in URLs.
+For **Bearer token**, paste the token; Pulse adds the prefix. For a custom API key, choose **API key / custom header** and supply its header name and exact value. Advanced setup still accepts the complete header value. Secrets are stored in macOS Keychain. Avoid putting tokens in URLs.
 
 See [examples/summary.json](examples/summary.json) for a complete response and [the summary schema](examples/summary.schema.json) for its optional fields:
 
@@ -45,7 +53,7 @@ Connect to `http://127.0.0.1:8765/summary` and map `Accounts` to `metrics.accoun
 
 ### PostgreSQL
 
-Use a dedicated database role limited to the aggregate data it needs. Enter a connection URL such as `postgresql://pulse_reader@db.example.com:5432/app` and put the password in the separate Keychain secret field. Remote connections require verified TLS.
+Use a dedicated read-only database role. Paste its connection string; Pulse separates an included password before saving the address, and stores it in Keychain. A separate password field is also available. Remote connections require verified TLS. Guided setup lists up to 100 readable tables and views.
 
 A query must return one aggregate row; metric paths are its column names. For example:
 

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ConnectionsView: View {
     @ObservedObject var store: AppStore
+    var initialSelection: UUID? = nil
     @State private var selectedID: UUID?
     @State private var editor: EditorItem?
     @State private var removeCandidate: ProjectConnection?
@@ -21,7 +22,7 @@ struct ConnectionsView: View {
             .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
             .safeAreaInset(edge: .bottom) {
                 HStack {
-                    Button { editor = EditorItem(connection: nil) } label: { Image(systemName: "plus") }.help("Add connection").accessibilityLabel("Add connection")
+                    Button { AppWindows.showAddProject(store: store) } label: { Image(systemName: "plus") }.help("Add Project").accessibilityLabel("Add Project")
                     Button { removeCandidate = store.connections.first { $0.id == selectedID } } label: { Image(systemName: "minus") }.disabled(selectedID == nil).help("Remove connection").accessibilityLabel("Remove connection")
                     Spacer()
                 }.buttonStyle(.borderless).padding(12).background(.bar)
@@ -43,7 +44,8 @@ struct ConnectionsView: View {
                     }
                     Section {
                         HStack {
-                            Button("Edit connection…") { editor = EditorItem(connection: project) }
+                            Button("Credentials…") { editor = EditorItem(connection: project, credentialsOnly: true) }
+                            Button("Advanced…") { editor = EditorItem(connection: project) }
                             Button("Refresh") { Task { await store.refreshAll() } }.disabled(store.isRefreshing || !project.enabled)
                         }
                     }
@@ -54,13 +56,16 @@ struct ConnectionsView: View {
                     Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 40, weight: .light)).foregroundStyle(.secondary)
                     Text("Bring your projects together.").font(.title3.weight(.semibold))
                     Text("Connect an API or database. Pick a few numbers.").font(.callout).foregroundStyle(.secondary)
-                    Button("Add a connection") { editor = EditorItem(connection: nil) }.buttonStyle(.borderedProminent).controlSize(.regular)
+                    Button("Add Project") { AppWindows.showAddProject(store: store) }.buttonStyle(.borderedProminent).controlSize(.regular)
                     Text("Credentials stay in Keychain. Data stays on this Mac.").font(.caption).foregroundStyle(.tertiary).padding(.top, 14)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(24)
             }
         }
         .frame(minWidth: 600, minHeight: 440)
-        .sheet(item: $editor) { item in ConnectionEditor(store: store, existing: item.connection) }
+        .sheet(item: $editor) { item in
+            if item.credentialsOnly, let connection = item.connection { CredentialEditor(store: store, connection: connection) }
+            else { ConnectionEditor(store: store, existing: item.connection) }
+        }
         .confirmationDialog("Remove \(removeCandidate?.name ?? "connection")?", isPresented: Binding(get: { removeCandidate != nil }, set: { if !$0 { removeCandidate = nil } })) {
             Button("Remove connection", role: .destructive) {
                 guard let project = removeCandidate else { return }
@@ -72,7 +77,8 @@ struct ConnectionsView: View {
         .onChange(of: store.connections) { _, connections in
             if selectedID == nil { selectedID = connections.first?.id }
         }
-        .onAppear { if selectedID == nil { selectedID = store.connections.first?.id } }
+        .onAppear { if selectedID == nil { selectedID = initialSelection ?? store.connections.first?.id } }
+        .onReceive(NotificationCenter.default.publisher(for: .pulseSelectProject)) { if let id = $0.object as? UUID { selectedID = id } }
     }
 
     private var localDataSection: some View {
@@ -83,8 +89,62 @@ struct ConnectionsView: View {
     private struct EditorItem: Identifiable {
         var id = UUID()
         var connection: ProjectConnection?
+        var credentialsOnly = false
     }
 }
+
+struct CredentialEditor: View {
+    @ObservedObject var store: AppStore
+    let connection: ProjectConnection
+    @Environment(\.dismiss) private var dismiss
+    @State private var secret = ""
+    @State private var bearer = false
+    @State private var loaded = false
+    @State private var saving = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Image(systemName: "key").foregroundStyle(.tint)
+                Text("\(connection.name) Credentials").font(.headline)
+                Spacer()
+            }.padding(20)
+            Form {
+                SecureField(connection.kind == .postgres ? "Password" : bearer ? "Token" : "Header value", text: $secret)
+                Text("Saved securely in Keychain. Leave blank to remove the credential.").font(.caption).foregroundStyle(.secondary)
+            }.formStyle(.grouped).disabled(saving || !loaded)
+            if let error { Text(error).foregroundStyle(.red).font(.callout).padding(.horizontal, 20).padding(.bottom, 12) }
+            Divider()
+            HStack {
+                if saving { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(saving)
+                Button("Save") {
+                    saving = true
+                    Task {
+                        do {
+                            let value = bearer && !secret.isEmpty && !secret.lowercased().hasPrefix("bearer ") ? "Bearer \(secret)" : secret
+                            try await store.save(connection, secret: value)
+                            dismiss()
+                        } catch { self.error = error.localizedDescription }
+                        saving = false
+                    }
+                }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(!loaded || saving)
+            }.padding(16)
+        }.frame(width: 440, height: 230)
+        .onAppear {
+            do {
+                let value = try store.secret(for: connection.id)
+                bearer = connection.kind == .http && connection.authHeader.lowercased() == "authorization" && (value.isEmpty || value.lowercased().hasPrefix("bearer "))
+                secret = bearer && value.lowercased().hasPrefix("bearer ") ? String(value.dropFirst(7)) : value
+                loaded = true
+            } catch { self.error = "The saved credential couldn’t be read. Unlock Keychain and reopen this window." }
+        }
+    }
+}
+
+extension Notification.Name { static let pulseSelectProject = Notification.Name("local.pulse.select-project") }
 
 struct ConnectionEditor: View {
     @ObservedObject var store: AppStore

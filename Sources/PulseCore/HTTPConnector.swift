@@ -12,6 +12,27 @@ public struct HTTPConnector: SummaryConnector {
     public init(transport: @escaping Transport) { self.transport = transport }
 
     public func collect(connection: ProjectConnection, secret: String?) async throws -> ProjectSnapshot {
+        try Self.snapshot(data: await requestData(connection: connection, secret: secret), connection: connection)
+    }
+
+    /// Finds a small set of summary numbers without requiring callers to know JSON paths.
+    /// Credentials and complete provider responses never leave the connector.
+    public func discover(connection: ProjectConnection, secret: String?) async throws -> [DiscoveredMetric] {
+        var preview = connection
+        preview.metrics = [MetricDefinition(label: "Preview", path: "preview")]
+        let data = try await requestData(connection: preview, secret: secret)
+        let found = try Self.discover(data: data)
+        if let first = found.first {
+            preview.metrics = [MetricDefinition(label: first.label, path: first.path)]
+            // Validate the same event/date contract used by collection before setup
+            // reports success. This reuses the payload and makes no second request.
+            _ = try Self.snapshot(data: data, connection: preview)
+        }
+        return found
+    }
+
+    private func requestData(connection: ProjectConnection, secret: String?) async throws -> Data {
+        guard connection.kind == .http else { throw PulseError.invalidConfiguration("Choose an HTTP source for this URL.") }
         try ConnectorValidation.validate(connection)
         guard let url = URL(string: connection.endpoint) else { throw PulseError.invalidConfiguration("Enter a valid endpoint URL.") }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
@@ -33,14 +54,12 @@ public struct HTTPConnector: SummaryConnector {
             if response.statusCode == 429 { throw PulseError.response("The service is limiting requests. Try a longer refresh interval.") }
             throw PulseError.response("The service returned HTTP \(response.statusCode). Try again later.")
         }
-        return try Self.snapshot(data: data, connection: connection)
+        guard data.count <= Self.maximumResponseBytes else { throw PulseError.response("The response is too large. Use a small summary endpoint.") }
+        return data
     }
 
     public static func snapshot(data: Data, connection: ProjectConnection, now: Date = Date()) throws -> ProjectSnapshot {
-        guard data.count <= maximumResponseBytes else { throw PulseError.response("The response is too large. Use a small summary endpoint.") }
-        guard let root = try? JSONSerialization.jsonObject(with: data), let object = root as? [String: Any] else {
-            throw PulseError.response("The endpoint must return a JSON object.")
-        }
+        let object = try summaryObject(data)
         let values = try connection.metrics.map { definition in
             let value = try scalar(at: definition.path, in: object)
             return MetricValue(id: definition.id, label: definition.label, value: value)
@@ -69,6 +88,72 @@ public struct HTTPConnector: SummaryConnector {
             }
         }
         return ProjectSnapshot(projectID: connection.id, metrics: values, events: events.sorted { $0.occurredAt < $1.occurredAt }, measuredAt: measuredAt, fetchedAt: now, coverage: coverage)
+    }
+
+    public static func discover(data: Data) throws -> [DiscoveredMetric] {
+        let object = try summaryObject(data)
+        let metrics = object["metrics"] as? [String: Any]
+        let root = metrics ?? object
+        let rootPath = metrics == nil ? [] : ["metrics"]
+        let found = discoverNumbers(in: root, rootObject: object, path: rootPath, depth: rootPath.count, remaining: 30)
+        guard !found.isEmpty else { throw PulseError.response("No summary numbers found. Use an endpoint with numeric totals, or choose Advanced to map values yourself.") }
+        return found
+    }
+
+    private static func discoverNumbers(in dictionary: [String: Any], rootObject: [String: Any], path: [String], depth: Int, remaining: Int) -> [DiscoveredMetric] {
+        guard depth < 5, remaining > 0 else { return [] }
+        var found: [DiscoveredMetric] = []
+        let controls = CharacterSet.controlCharacters
+        for key in dictionary.keys.sorted() {
+            guard found.count < remaining else { break }
+            guard !key.isEmpty, key.count <= 96, !key.contains("."),
+                  !key.unicodeScalars.contains(where: { controls.contains($0) }),
+                  !isPrivateOrMetadataKey(key) else { continue }
+            let nextPath = path + [key]
+            let joined = nextPath.joined(separator: ".")
+            guard joined.count <= 128, let value = dictionary[key] else { continue }
+            if let nested = value as? [String: Any] {
+                found += discoverNumbers(in: nested, rootObject: rootObject, path: nextPath, depth: depth + 1, remaining: remaining - found.count)
+            } else if isSummaryNumber(value), let preview = try? scalar(at: joined, in: rootObject) {
+                let namespace = nextPath.drop { ["metrics", "stats", "summary", "data"].contains($0.lowercased()) }
+                let label = namespace.map(ProjectSetup.friendlyLabel).joined(separator: " ")
+                found.append(DiscoveredMetric(path: joined, label: String(label.prefix(40)), previewValue: preview))
+            }
+        }
+        return found
+    }
+
+    private static func summaryObject(_ data: Data) throws -> [String: Any] {
+        guard data.count <= maximumResponseBytes else { throw PulseError.response("The response is too large. Use a small summary endpoint.") }
+        guard let root = try? JSONSerialization.jsonObject(with: data), let object = root as? [String: Any] else {
+            throw PulseError.response("The endpoint must return a JSON object.")
+        }
+        return object
+    }
+
+    private static func isSummaryNumber(_ value: Any) -> Bool {
+        if let number = value as? NSNumber {
+            return CFGetTypeID(number) != CFBooleanGetTypeID() && number.doubleValue.isFinite
+        }
+        if let string = value as? String {
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, trimmed.count <= 24,
+                  trimmed.range(of: #"^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"#, options: .regularExpression) != nil,
+                  let number = Double(trimmed), number.isFinite else { return false }
+            return true
+        }
+        return false
+    }
+
+    private static func isPrivateOrMetadataKey(_ key: String) -> Bool {
+        let words = key.replacingOccurrences(of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
+            .lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        let compact = words.joined()
+        let privateWords: Set<String> = ["id", "ids", "uuid", "email", "phone", "mobile", "password", "secret", "token", "key", "apikey", "credential", "credentials", "authorization", "signature", "address", "latitude", "longitude", "lat", "lng", "postcode", "zipcode", "dob"]
+        if words.contains(where: privateWords.contains) { return true }
+        if ["key", "apikey", "accesskey", "privatekey", "publickey", "accountnumber", "phonenumber", "ip", "ipaddress", "events", "timestamp", "createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "date", "time"].contains(compact) { return true }
+        return compact.hasSuffix("timestamp") || compact.hasSuffix("uuid") || compact.hasSuffix("datetime")
+            || ["createdat", "updatedat", "measuredat", "occurredat", "fetchedat", "lastseen", "lastactive", "lastlogin"].contains(where: compact.hasPrefix)
     }
 
     private static func scalar(at path: String, in root: [String: Any]) throws -> String {

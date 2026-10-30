@@ -14,6 +14,8 @@ struct PulsePanel: View {
                 Text("Pulse").font(.system(size: 16, weight: .semibold))
                 Spacer()
                 if store.isDemo { Text("DEMO").font(.system(size: 9, weight: .semibold, design: .rounded)).tracking(0.6).padding(.horizontal, 7).padding(.vertical, 4).background(.quaternary, in: Capsule()).foregroundStyle(.secondary).accessibilityLabel("Example data") }
+                Button { AppWindows.showAddProject(store: store) } label: { Image(systemName: "plus").frame(width: 14, height: 14) }
+                    .buttonStyle(.borderless).help("Add Project").accessibilityLabel("Add Project").keyboardShortcut("n")
                 Button { Task { await store.refreshAll() } } label: {
                     if store.isRefreshing { ProgressView().controlSize(.mini).frame(width: 14, height: 14) }
                     else { Image(systemName: "arrow.clockwise").frame(width: 14, height: 14) }
@@ -44,9 +46,10 @@ struct PulsePanel: View {
                 Text(footer).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 2)
                 if store.isDemo {
-                    Button("Connect…") { AppWindows.showConnections(store: store) }.font(.system(size: 11, weight: .medium)).buttonStyle(.borderless)
+                    Button("Add Project…") { AppWindows.showAddProject(store: store) }.font(.system(size: 11, weight: .medium)).buttonStyle(.borderless)
                 }
                 Menu {
+                    Button("Add Project…") { AppWindows.showAddProject(store: store) }
                     Button("Connections…") { AppWindows.showConnections(store: store) }.keyboardShortcut(",")
                     if store.connections.isEmpty { Button(store.showExamples ? "Hide example projects" : "Show example projects") { store.showExamples.toggle() } }
                     Divider()
@@ -74,7 +77,7 @@ struct PulsePanel: View {
             Image(systemName: "square.stack.3d.up").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
             Text("Your projects, at a glance.").font(.headline)
             Text("Connect a source to see its numbers here.").font(.caption).foregroundStyle(.secondary)
-            Button("Add a connection") { AppWindows.showConnections(store: store) }.buttonStyle(.borderedProminent).controlSize(.small).padding(.top, 4)
+            Button("Add Project") { AppWindows.showAddProject(store: store) }.buttonStyle(.borderedProminent).controlSize(.small).padding(.top, 4)
         }.frame(maxWidth: .infinity).padding(.vertical, 32).padding(.horizontal, 20)
     }
 
@@ -126,7 +129,7 @@ struct PulsePanel: View {
                             HStack(alignment: .top) { Image(systemName: "circle.fill").font(.system(size: 4)).padding(.top, 5); Text(event.title).lineLimit(2); Spacer(); Text(event.occurredAt, style: .relative).foregroundStyle(.secondary) }
                         }
                         HStack {
-                            Button("Edit connection…") { AppWindows.showConnections(store: store) }
+                            Button("Project settings…") { AppWindows.showConnections(store: store, selecting: project.id) }
                             Spacer()
                             if let url = URL(string: project.link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") { Link("Open project ↗", destination: url) }
                         }.buttonStyle(.link)

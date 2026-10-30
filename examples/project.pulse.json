@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "Example project",
+  "kind": "http",
+  "endpoint": "https://example.com/api/summary",
+  "authHeader": "Authorization",
+  "symbol": "calendar",
+  "link": "https://example.com/",
+  "metrics": [
+    { "label": "Accounts", "path": "metrics.accounts" },
+    { "label": "Bookings · 7d", "path": "metrics.bookings7d" }
+  ]
+}

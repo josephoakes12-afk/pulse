@@ -9,7 +9,7 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - name: Test
-        run: swift test
+      - name: Test release configuration
+        run: swift test --configuration release
       - name: Build local app bundle
         run: scripts/build-app.sh

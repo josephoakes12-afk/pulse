@@ -15,6 +15,7 @@ enum PulseApp {
 final class PulseAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
+    private var panelObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -37,15 +38,21 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
         controller.view.appearance = popover.appearance
         controller.sizingOptions = [.preferredContentSize]
         popover.contentViewController = controller
+        panelObserver = NotificationCenter.default.addObserver(forName: .pulseShowPanel, object: nil, queue: .main) { [weak self] _ in
+            // Let the setup window finish closing and its mouse event finish
+            // before showing a transient popover, which would otherwise dismiss.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self?.showPanel() }
+        }
         Task {
             await AppStore.shared.start()
             let arguments = ProcessInfo.processInfo.arguments
-            if arguments.contains("--show-panel") || (AppStore.shared.connections.isEmpty && !arguments.contains("--preview") && !arguments.contains("--connections")) {
+            if arguments.contains("--show-panel") || (AppStore.shared.connections.isEmpty && !arguments.contains("--preview") && !arguments.contains("--connections") && !arguments.contains("--add-project")) {
                 showPanel()
             }
         }
         if ProcessInfo.processInfo.arguments.contains("--preview") { AppWindows.showPreview(store: .shared) }
         if ProcessInfo.processInfo.arguments.contains("--connections") { AppWindows.showConnections(store: .shared) }
+        if ProcessInfo.processInfo.arguments.contains("--add-project") { AppWindows.showAddProject(store: .shared) }
     }
 
     @objc private func togglePanel() {
@@ -65,6 +72,7 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showConnections() { AppWindows.showConnections(store: .shared) }
+    @objc private func addProject() { AppWindows.showAddProject(store: .shared) }
 
     private func configureMenus() {
         let menu = NSMenu()
@@ -72,6 +80,8 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
         let applicationMenu = NSMenu(title: "Pulse")
         applicationMenu.addItem(withTitle: "About Pulse", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         applicationMenu.addItem(.separator())
+        let add = applicationMenu.addItem(withTitle: "Add Project…", action: #selector(addProject), keyEquivalent: "n")
+        add.target = self
         let settings = applicationMenu.addItem(withTitle: "Settings…", action: #selector(showConnections), keyEquivalent: ",")
         settings.target = self
         applicationMenu.addItem(.separator())
@@ -94,18 +104,33 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate {
 enum AppWindows {
     private static var connections: NSWindow?
     private static var preview: NSWindow?
+    private static var addProject: NSWindow?
 
-    static func showConnections(store: AppStore) {
+    static func showAddProject(store: AppStore) {
+        if addProject?.isVisible != true {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 510, height: 470), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "Add Project"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: AddProjectView(store: store) { [weak window] in window?.close() })
+            window.center()
+            addProject = window
+        }
+        addProject?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func showConnections(store: AppStore, selecting projectID: UUID? = nil) {
         if connections == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 470), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "Pulse Settings"
-            window.contentView = NSHostingView(rootView: ConnectionsView(store: store))
+            window.contentView = NSHostingView(rootView: ConnectionsView(store: store, initialSelection: projectID))
             window.minSize = NSSize(width: 600, height: 440)
             window.isReleasedWhenClosed = false
             window.center()
             connections = window
         }
         connections?.makeKeyAndOrderFront(nil)
+        if let projectID { NotificationCenter.default.post(name: .pulseSelectProject, object: projectID) }
         NSApp.activate(ignoringOtherApps: true)
     }
 
