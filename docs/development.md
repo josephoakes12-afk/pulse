@@ -7,7 +7,7 @@ swift test --configuration release
 scripts/run.sh
 ```
 
-`scripts/build-app.sh` builds `build/Pulse.app` without opening it. Local builds are ad hoc signed for development. Use `scripts/run.sh debug` for a faster build.
+`scripts/build-app.sh` builds `build/Pulse.app` without opening it. Local builds are ad hoc signed for development. Release bundles remove debugging symbols and remap build paths; `scripts/run.sh debug` keeps symbols for development.
 
 The repository has three main areas:
 

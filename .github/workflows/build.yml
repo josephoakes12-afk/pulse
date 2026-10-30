@@ -11,7 +11,9 @@ jobs:
         runner: [macos-26, macos-26-intel]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - name: Test release configuration
         run: swift test --configuration release
       - name: Build local app bundle

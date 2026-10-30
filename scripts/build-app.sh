@@ -15,6 +15,17 @@ PULSE_SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
 [[ "$PULSE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version must be major.minor.patch." >&2; exit 2; }
 [[ "$PULSE_BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "Build number must be numeric." >&2; exit 2; }
 PULSE_BUILD_OPTIONS=(--configuration "$PULSE_CONFIGURATION")
+if [[ "$PULSE_CONFIGURATION" == release ]]; then
+    # Keep developer home paths out of debug records and C/C++ __FILE__ strings.
+    # These flags are supported by the Swift 6.2 / Clang toolchain baseline.
+    PULSE_BUILD_OPTIONS+=(
+        -Xswiftc -file-prefix-map -Xswiftc "$PULSE_ROOT=."
+        -Xcc "-ffile-prefix-map=$PULSE_ROOT=."
+        -Xcxx "-ffile-prefix-map=$PULSE_ROOT=."
+        -Xcc "-ffile-prefix-map=$PULSE_ROOT/.build/checkouts=Dependencies"
+        -Xcxx "-ffile-prefix-map=$PULSE_ROOT/.build/checkouts=Dependencies"
+    )
+fi
 case "${PULSE_ARCHITECTURES:-native}" in
     native) ;;
     universal) PULSE_BUILD_OPTIONS+=(--arch arm64 --arch x86_64) ;;
@@ -42,6 +53,14 @@ while IFS= read -r PULSE_RPATH; do
 done < <(otool -l "$PULSE_APP/Contents/MacOS/Pulse" | awk '
     /cmd LC_RPATH/ { getline; getline; sub(/^[[:space:]]*path /, ""); sub(/ \(offset.*$/, ""); print }
 ' | sort -u)
+if [[ "$PULSE_CONFIGURATION" == release ]]; then
+    strip -S -x "$PULSE_APP/Contents/MacOS/Pulse"
+    if LC_ALL=C /usr/bin/grep -aFq "$PULSE_ROOT/" "$PULSE_APP/Contents/MacOS/Pulse" \
+        || LC_ALL=C /usr/bin/grep -aFq "$HOME/" "$PULSE_APP/Contents/MacOS/Pulse"; then
+        echo "Release executable still contains a local home or build path." >&2
+        exit 1
+    fi
+fi
 PULSE_LICENSES="$PULSE_APP/Contents/Resources/Licenses"
 mkdir -p "$PULSE_LICENSES/Pulse"
 # Earlier builds may have preserved read-only checkout permissions. These are
