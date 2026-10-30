@@ -14,11 +14,13 @@ For a reusable setup, import a project file such as [project.pulse.json](../exam
 
 The range menu uses cached 24-hour, 7-day, 30-day and lifetime summaries. A project can be younger than its selected window; that does not make the window unavailable. Deleted or unrecorded source history cannot be recovered.
 
-Projects appear when their source supports the selected period. The range menu lists projects without history for that period; all saved projects remain in Settings. A plain summary without range data supports lifetime; adding it selects an available period. The info button explains the source's coverage.
+Projects appear when their source supports the selected period. The range menu lists projects without history for that period; all saved projects remain in Settings. A plain summary without range data supports lifetime; adding it selects an available period. Use **ⓘ** to choose KPIs; **About this data** explains coverage.
 
 ## Connect a service
 
-The guided setup detects API numbers and readable database tables. A single clear, declared relationship can preselect headline counts and add averages and grouped counts automatically. Otherwise, choose the tables to count. Custom filters and queries remain in Advanced. The default refresh interval is five minutes.
+The guided setup detects API numbers and readable database tables. Declared relationships add totals, averages, maxima, activity and grouped counts. Verified creation dates, boolean fields and small declared enums add further choices. Otherwise, choose the tables to count. Custom filters and queries retain their meaning. The default refresh interval is five minutes.
+
+Open **ⓘ** to put any available KPI in the headline or drawer. When three headlines are selected, choose another KPI and the number it should replace. **More** holds up to six drawer KPIs; **Breakdowns** chooses grouped lists. These choices also apply to widgets and never change collection or alerts.
 
 ### HTTP / JSON
 
@@ -38,7 +40,7 @@ See [summary.json](../examples/summary.json) for a complete response and [the su
 | `ranges` | Optional `24h`, `7d`, `30d`, `lifetime` summaries with the same metric paths, optional path-to-label overrides and coverage |
 | `alerts` | Optional integer `counters` and calendar-day `daily` observations for native growth alerts |
 
-Additional numeric fields can become extra KPIs automatically. Pulse shows at most six extra KPIs, two groups and ten rows per group. It does not infer totals from arbitrary record arrays. Database groups use declared foreign keys and available display names; averages include visible parents with zero associated records, and unlinked records are counted separately. Missing or ambiguous relationships need explicit source mapping.
+Additional numeric fields can become extra KPIs automatically. The catalog accepts up to 24 extra KPIs and four grouped lists; the panel shows up to six chosen extras, two groups and ten rows per group. It does not infer totals from arbitrary record arrays. Database groups use declared foreign keys and available display names; averages include visible parents with zero associated records, and records without a visible parent are counted separately. Missing or ambiguous relationships need explicit source mapping. Currency units and revenue definitions are not guessed.
 
 Keep event IDs stable across responses. Retain enough history at the source for Pulse to catch up after being offline. The first successful collection establishes a baseline rather than notifying about old events.
 
@@ -64,7 +66,7 @@ Pulse applies a read-only transaction and a statement timeout. These limits comp
 
 ### Supabase
 
-Use an imported setup or Advanced with either a project's Data API endpoint or Supabase's restricted read-only SQL endpoint. Data API plans issue bounded exact-count HEAD requests with at most three concurrent requests. SQL summaries use the read-only query route. Both keep their credentials in Keychain, reject redirects and return all supported time ranges in one refresh cycle. No schema or role changes are required by the connector.
+Use an imported setup or Advanced with either a project's Data API endpoint or Supabase's restricted read-only SQL endpoint. Data API plans issue bounded exact-count HEAD requests with at most three concurrent requests. Plain creation-count plans gain lifetime totals automatically. Optional catalogs add scoped counts and ratios; bounded grouped requests fetch parent labels and child counts. Grouped lists above 100 parents are omitted with an explanation in **About this data**. SQL summaries use the read-only query route. Both keep credentials in Keychain, reject redirects and return all supported time ranges in one refresh cycle. No schema or role changes are required by the connector.
 
 ## Local by design
 

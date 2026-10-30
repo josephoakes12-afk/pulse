@@ -40,14 +40,14 @@ private func drawerConnection(paths: [String] = ["metrics.users"]) -> ProjectCon
 }
 
 @Test func drawerBoundsDetailsGroupsAndRowsWithoutChangingHeadlines() throws {
-    let fields = (0..<15).map { ["id": "detail-\($0)", "label": "Extra \($0)", "value": $0] as [String: Any] }
+    let fields = (0..<40).map { ["id": "detail-\($0)", "label": "Extra \($0)", "value": $0] as [String: Any] }
     let rows = (0..<20).map { ["id": "user-\($0)", "label": "User \($0)", "value": $0] as [String: Any] }
     let groups = (0..<5).map { ["id": "group-\($0)", "title": "Group \($0)", "rows": rows] as [String: Any] }
     let payload = try JSONSerialization.data(withJSONObject: ["metrics": ["users": 20], "details": fields, "breakdowns": groups])
     let snapshot = try HTTPConnector.snapshot(data: payload, connection: drawerConnection())
     #expect(snapshot.metrics.first?.value == "20")
-    #expect(snapshot.details?.count == 6)
-    #expect(snapshot.breakdowns?.count == 2)
+    #expect(snapshot.details?.count == 24)
+    #expect(snapshot.breakdowns?.count == 4)
     #expect(snapshot.breakdowns?.allSatisfy { $0.rows.count == 10 && $0.truncated } == true)
 }
 

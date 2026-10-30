@@ -4,6 +4,8 @@ import Foundation
 import PulseCore
 import UserNotifications
 
+enum MetricPlacement { case headline, drawer }
+
 @MainActor
 final class AppStore: ObservableObject {
     static let shared = AppStore()
@@ -103,34 +105,92 @@ final class AppStore: ObservableObject {
         isDemo ? DemoMetricRanges.snapshots().first(where: { $0.projectID == id }) : snapshots[id]
     }
 
-    func metricIsVisible(_ metricID: UUID, projectID: UUID) -> Bool {
-        let source = sourceSnapshot(for: projectID) ?? rawSnapshot(for: projectID)
-        guard let source else { return true }
-        let display = source.applyingVisibility(metricVisibilities[projectID] ?? MetricVisibility())
-        return display.metrics.contains { $0.id == metricID } || (display.details ?? []).contains { $0.id == metricID }
+    func metricIsVisible(_ metricID: UUID, projectID: UUID, placement: MetricPlacement) -> Bool {
+        guard let display = snapshot(for: projectID) else { return false }
+        return (placement == .headline ? display.metrics : display.details ?? []).contains { $0.id == metricID }
     }
 
-    func canHideMetric(_ metricID: UUID, projectID: UUID) -> Bool {
-        guard let source = sourceSnapshot(for: projectID) ?? rawSnapshot(for: projectID),
-              source.metrics.contains(where: { $0.id == metricID }) else { return true }
-        let display = source.applyingVisibility(metricVisibilities[projectID] ?? MetricVisibility())
-        return !display.metrics.contains(where: { $0.id == metricID }) || display.metrics.count > 1
+    func canSetMetric(_ metricID: UUID, visible: Bool, projectID: UUID, placement: MetricPlacement) -> Bool {
+        guard let display = snapshot(for: projectID) else { return false }
+        let selected = placement == .headline ? display.metrics : display.details ?? []
+        if !visible { return placement != .headline || selected.count > 1 }
+        if placement == .drawer, display.metrics.contains(where: { $0.id == metricID }) { return false }
+        return selected.count < (placement == .headline ? 3 : 6)
     }
 
-    func setMetricVisible(_ visible: Bool, metricID: UUID, projectID: UUID) async throws {
+    private func editableVisibility(projectID: UUID) throws -> MetricVisibility {
         guard isDemo || connections.contains(where: { $0.id == projectID }),
-              let source = sourceSnapshot(for: projectID) ?? rawSnapshot(for: projectID),
-              (source.metrics + (source.details ?? [])).contains(where: { $0.id == metricID }) else {
+              snapshot(for: projectID) != nil else {
+            throw PulseError.invalidConfiguration("This connection is no longer available.")
+        }
+        return metricVisibilities[projectID] ?? MetricVisibility()
+    }
+
+    func setMetricVisible(_ visible: Bool, metricID: UUID, projectID: UUID, placement: MetricPlacement) async throws {
+        guard let source = sourceSnapshot(for: projectID), source.metricCatalog.contains(where: { $0.id == metricID }) else {
             throw PulseError.invalidConfiguration("This number is no longer available.")
         }
-        guard visible || canHideMetric(metricID, projectID: projectID) else { return }
-        var next = metricVisibilities[projectID] ?? MetricVisibility()
-        if visible { next.hiddenMetricIDs.remove(metricID) }
-        else { next.hiddenMetricIDs.insert(metricID) }
+        guard canSetMetric(metricID, visible: visible, projectID: projectID, placement: placement) else { return }
+        var next = try editableVisibility(projectID: projectID)
+        let display = snapshot(for: projectID)!
+        if placement == .headline {
+            next.headlineMetricIDs = display.metrics.map(\.id)
+            if next.detailMetricIDs == nil { next.detailMetricIDs = (display.details ?? []).map(\.id) }
+        } else { next.detailMetricIDs = (display.details ?? []).map(\.id) }
+        var selected = placement == .headline ? next.headlineMetricIDs ?? [] : next.detailMetricIDs ?? []
+        selected.removeAll { $0 == metricID }
+        if visible { selected.append(metricID); next.hiddenMetricIDs.remove(metricID) }
+        if placement == .headline {
+            next.headlineMetricIDs = selected
+            if visible { next.detailMetricIDs?.removeAll { $0 == metricID } }
+        } else { next.detailMetricIDs = selected }
+        try await persistMetricVisibility(next, projectID: projectID)
+    }
+
+    func replaceHeadline(_ metricID: UUID, replacing oldID: UUID, projectID: UUID) async throws {
+        guard let source = sourceSnapshot(for: projectID), source.metricCatalog.contains(where: { $0.id == metricID }) else {
+            throw PulseError.invalidConfiguration("This number is no longer available.")
+        }
+        var next = try editableVisibility(projectID: projectID)
+        let display = snapshot(for: projectID)!
+        next.headlineMetricIDs = display.metrics.map(\.id)
+        if next.detailMetricIDs == nil { next.detailMetricIDs = (display.details ?? []).map(\.id) }
+        guard let index = next.headlineMetricIDs?.firstIndex(of: oldID),
+              next.headlineMetricIDs?.contains(metricID) == false else { return }
+        next.headlineMetricIDs?[index] = metricID
+        next.detailMetricIDs?.removeAll { $0 == metricID }
+        next.hiddenMetricIDs.remove(metricID)
+        try await persistMetricVisibility(next, projectID: projectID)
+    }
+
+    func breakdownIsVisible(_ id: String, projectID: UUID) -> Bool {
+        (snapshot(for: projectID)?.breakdowns ?? []).contains { $0.id == id }
+    }
+
+    func setBreakdownVisible(_ visible: Bool, breakdownID: String, projectID: UUID) async throws {
+        guard let source = sourceSnapshot(for: projectID), (source.breakdowns ?? []).contains(where: { $0.id == breakdownID }) else {
+            throw PulseError.invalidConfiguration("This breakdown is no longer available.")
+        }
+        var next = try editableVisibility(projectID: projectID)
+        var selected = (snapshot(for: projectID)?.breakdowns ?? []).map(\.id)
+        selected.removeAll { $0 == breakdownID }
+        guard !visible || selected.count < 2 else { return }
+        if visible { selected.append(breakdownID) }
+        next.visibleBreakdownIDs = selected
+        try await persistMetricVisibility(next, projectID: projectID)
+    }
+
+    func resetKPIs(projectID: UUID) async throws {
+        guard isDemo || connections.contains(where: { $0.id == projectID }) else { return }
+        try await persistMetricVisibility(MetricVisibility(), projectID: projectID)
+    }
+
+    private func persistMetricVisibility(_ next: MetricVisibility, projectID: UUID) async throws {
         // Update immediately so successive menu choices build on the last one.
+        guard isDemo || storage != nil else { throw PulseError.storage("Local storage is unavailable.") }
         metricVisibilities[projectID] = next
         if isDemo { return }
-        guard let storage else { throw PulseError.storage("Local storage is unavailable.") }
+        guard let storage else { return }
         let previous = visibilityWrites[projectID]?.task
         let writeID = UUID()
         let write = Task {
@@ -182,6 +242,7 @@ final class AppStore: ObservableObject {
 
     func refreshAll() async {
         guard !isDemo else { return }
+        inspectedConnections.removeAll()
         await withTaskGroup(of: Void.self) { group in
             for connection in connections where connection.enabled { group.addTask { await self.refresh(connection) } }
         }
@@ -258,8 +319,9 @@ final class AppStore: ObservableObject {
     private func inspectionKey(_ connection: ProjectConnection) -> String { connection.id.uuidString + connection.credentialVersion.uuidString + connection.endpoint + connection.query }
 
     private func inspectAutomaticStats(_ connection: ProjectConnection, secret: String?) async -> ProjectConnection {
-        guard connection.kind == .postgres, connection.autoStats == nil,
-              inspectedConnections.insert(inspectionKey(connection)).inserted else { return connection }
+        let isSQL = connection.kind == .supabase && connection.endpoint.hasPrefix("https://api.supabase.com/v1/projects/")
+        guard connection.kind == .postgres || connection.kind == .supabase else { return connection }
+        guard inspectedConnections.insert(inspectionKey(connection)).inserted else { return connection }
         var completed = false
         defer {
             // Edits or a temporary failure during an await should allow the
@@ -267,16 +329,50 @@ final class AppStore: ObservableObject {
             if !completed { inspectedConnections.remove(inspectionKey(connection)) }
         }
         do {
+            if connection.kind == .supabase, !isSQL {
+                let enriched = try SupabaseConnector.enrichCountPlan(connection)
+                guard enriched != connection else { completed = true; return connection }
+                guard !isMutating, let storage,
+                      let index = connections.firstIndex(where: { $0.hasSameCollectionConfiguration(as: connection) }) else { return connection }
+                isMutating = true
+                defer { isMutating = false }
+                var updated = connections
+                updated[index] = enriched
+                try await storage.saveConnections(updated)
+                connections = updated
+                completed = true
+                return enriched
+            }
             let connector = PostgresConnector()
-            let available = try await connector.discoverTables(connection: connection, secret: secret)
+            let available: [DatabaseTable]
+            if isSQL { available = connection.sourceTables ?? [] }
+            else { available = try await connector.discoverTables(connection: connection, secret: secret) }
             guard isCurrent(connection) else { return connection }
-            let selected = PostgresConnector.inferredSourceTables(connection: connection, available: available)
+            var structuralCheck = connection
+            structuralCheck.kind = .postgres
+            if isSQL { structuralCheck.endpoint = "postgresql://reader@localhost/pulse" }
+            let selected = PostgresConnector.inferredSourceTables(connection: structuralCheck, available: available)
             guard !selected.isEmpty else { completed = true; return connection }
-            let relationships = try await connector.discoverRelationships(connection: connection, secret: secret, tables: available)
+            let relationships: [DatabaseRelationship]
+            let columns: [DatabaseColumn]
+            if isSQL {
+                relationships = connection.autoStats?.relationships ?? []
+                let data = try await SupabaseConnector().readOnlyRows(connection: connection, secret: secret,
+                                                                    query: DatabaseAnalytics.columnDiscoveryQuery(tables: selected))
+                let rows = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+                columns = rows.compactMap { row in
+                    guard let text = row["pulse_column"] as? String, let data = text.data(using: .utf8) else { return nil }
+                    return try? JSONDecoder().decode(DatabaseColumn.self, from: data)
+                }
+            } else {
+                relationships = try await connector.discoverRelationships(connection: connection, secret: secret, tables: available)
+                columns = (try? await connector.discoverColumns(connection: connection, secret: secret, tables: selected)) ?? []
+            }
+            try Task.checkCancellation()
             guard !isMutating, let storage,
                   let index = connections.firstIndex(where: { $0.hasSameCollectionConfiguration(as: connection) }) else { return connection }
             let current = connections[index]
-            let upgraded = PostgresConnector.configureAnalytics(base: current, tables: selected, relationships: relationships)
+            let upgraded = PostgresConnector.configureAnalytics(base: current, tables: selected, relationships: relationships, columns: columns)
             guard upgraded != current else { completed = true; return current }
             isMutating = true
             defer { isMutating = false }

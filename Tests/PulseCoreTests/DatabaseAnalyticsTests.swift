@@ -178,7 +178,7 @@ private func analyticsBase() -> ProjectConnection {
 
 @Test func automaticPlanRejectsUnknownVersionsAndExcessRelationships() throws {
     var base = analyticsBase()
-    base.autoStats = DatabaseAnalyticsPlan(relationships: [analyticsRelationship()], version: 2)
+    base.autoStats = DatabaseAnalyticsPlan(relationships: [analyticsRelationship()], version: 99)
     #expect(throws: PulseError.self) { try PostgresConnector.queryWithAnalytics(base) }
     base.autoStats = DatabaseAnalyticsPlan(relationships: [])
     #expect(throws: PulseError.self) { try PostgresConnector.queryWithAnalytics(base) }

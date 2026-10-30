@@ -121,7 +121,7 @@ public actor LocalStore {
             guard try database.rows("SELECT id FROM connections WHERE id = ?", [.text(projectID.uuidString)]).first != nil else {
                 throw PulseError.invalidConfiguration("This connection has been removed.")
             }
-            if visibility.hiddenMetricIDs.isEmpty {
+            if visibility == MetricVisibility() {
                 try database.execute("DELETE FROM presentation_state WHERE project_id = ?", [.text(projectID.uuidString)])
             } else {
                 try database.execute("INSERT INTO presentation_state (project_id, payload) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET payload = excluded.payload",
@@ -234,8 +234,12 @@ public actor LocalStore {
     }
 
     private func sourceChanged(from old: ProjectConnection, to new: ProjectConnection) -> Bool {
-        old.kind != new.kind || old.endpoint != new.endpoint || old.query != new.query
-            || old.authHeader != new.authHeader || old.credentialVersion != new.credentialVersion
+        if old.kind != new.kind || old.endpoint != new.endpoint || old.authHeader != new.authHeader
+            || old.credentialVersion != new.credentialVersion { return true }
+        guard old.query != new.query else { return false }
+        // Adding aggregate catalog choices does not create a different source or
+        // reset the existing counts, delivered receipts or notification baseline.
+        return !SupabaseConnector.hasSamePrimaryCountPlan(old, new)
     }
 
     private func persistSnapshot(_ snapshot: ProjectSnapshot) throws {

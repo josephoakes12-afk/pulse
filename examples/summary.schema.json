@@ -10,7 +10,7 @@
     },
     "coverage": {
       "type": "string",
-      "maxLength": 160
+      "maxLength": 500
     },
     "events": {
       "type": "array",
@@ -46,7 +46,7 @@
       }
     },
     "details": {
-      "description": "Optional expanded KPIs. Pulse displays at most six and keeps headline metrics separate.",
+      "description": "Up to 24 aggregate KPI choices. People can promote any to the headline and choose up to six for the drawer.",
       "anyOf": [
         {
           "type": "object",
@@ -71,7 +71,7 @@
       ]
     },
     "breakdowns": {
-      "description": "Explicit aggregate groups, not raw user or booking records. Pulse shows at most two groups and ten rows per group.",
+      "description": "Explicit aggregate groups, not raw user or booking records. Up to four choices; the panel shows up to two groups and ten rows per group.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/breakdown"

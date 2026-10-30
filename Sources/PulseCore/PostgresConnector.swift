@@ -156,10 +156,32 @@ public struct PostgresConnector: SummaryConnector {
         DatabaseAnalytics.recommendedTables(from: relationships)
     }
 
-    public static func configureAnalytics(base: ProjectConnection, tables: [DatabaseTable], relationships: [DatabaseRelationship]) -> ProjectConnection {
-        var result = DatabaseAnalytics.configure(base: base, tables: tables, relationships: relationships)
+    public static func configureAnalytics(base: ProjectConnection, tables: [DatabaseTable], relationships: [DatabaseRelationship], columns: [DatabaseColumn] = []) -> ProjectConnection {
+        var result = DatabaseAnalytics.configure(base: base, tables: tables, relationships: relationships, columns: columns)
         result.sourceTables = tables
         return result
+    }
+
+    /// Reads only column/type metadata, including declared enum labels. Creation
+    /// windows require timestamptz, so timezone-unknown local timestamps are not guessed.
+    public func discoverColumns(connection: ProjectConnection, secret: String?, tables: [DatabaseTable]) async throws -> [DatabaseColumn] {
+        guard connection.kind == .postgres else { throw PulseError.invalidConfiguration("Choose a PostgreSQL connection.") }
+        guard !tables.isEmpty else { return [] }
+        let query = try DatabaseAnalytics.columnDiscoveryQuery(tables: tables)
+        var check = connection
+        check.query = "SELECT 1 AS total"
+        check.metrics = [MetricDefinition(label: "Total", path: "total")]
+        try ConnectorValidation.validate(check)
+        return try await withReadOnlyConnection(connection: check, secret: secret) { database, logger in
+            let rows = try await database.query(PostgresQuery(unsafeSQL: query), logger: logger)
+            var columns: [DatabaseColumn] = []
+            for try await payload in rows.decode(String.self) {
+                if let data = payload.data(using: .utf8), let column = try? JSONDecoder().decode(DatabaseColumn.self, from: data) {
+                    columns.append(column)
+                }
+            }
+            return columns
+        }
     }
 
     public static func queryWithAnalytics(_ connection: ProjectConnection) throws -> String {
@@ -227,7 +249,7 @@ public struct PostgresConnector: SummaryConnector {
         }
         result.sourceTables = tables
         if let plan = base.autoStats {
-            result = DatabaseAnalytics.configure(base: result, tables: tables, relationships: plan.relationships)
+            result = DatabaseAnalytics.configure(base: result, tables: tables, relationships: plan.relationships, columns: plan.columns ?? [])
         }
         try ConnectorValidation.validate(result)
         return result

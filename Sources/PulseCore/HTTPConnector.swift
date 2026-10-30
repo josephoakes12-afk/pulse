@@ -7,6 +7,8 @@ public struct HTTPConnector: SummaryConnector {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
     private let transport: Transport
     public static let maximumResponseBytes = 1_048_576
+    public static let maximumDetailMetrics = 24
+    public static let maximumBreakdowns = 4
 
     public init() { transport = { request in try await Self.fetch(request) } }
     public init(transport: @escaping Transport) { self.transport = transport }
@@ -72,7 +74,7 @@ public struct HTTPConnector: SummaryConnector {
             }
             measuredAt = date
         }
-        let coverage = (object["coverage"] as? String).map { String($0.prefix(160)) }
+        let coverage = (object["coverage"] as? String).map { String($0.prefix(500)) }
         var events: [PulseEvent] = []
         if let rawEvents = object["events"] {
             guard let rows = rawEvents as? [[String: Any]], rows.count <= 1_000 else { throw PulseError.response("The events field must contain at most 1,000 events.") }
@@ -115,7 +117,7 @@ public struct HTTPConnector: SummaryConnector {
             }) else { continue }
             let details = expandedMetrics(in: fields, connection: rangeConnection)
             let breakdowns = expandedBreakdowns(in: fields, projectID: connection.id)
-            result[range.rawValue] = MetricRangeSnapshot(metrics: metrics, coverage: cleanText(fields["coverage"], limit: 160),
+            result[range.rawValue] = MetricRangeSnapshot(metrics: metrics, coverage: cleanText(fields["coverage"], limit: 500),
                                                        details: details.isEmpty ? nil : details, breakdowns: breakdowns.isEmpty ? nil : breakdowns)
         }
         return result
@@ -175,7 +177,7 @@ public struct HTTPConnector: SummaryConnector {
         if let fields = explicit as? [String: Any] {
             // The explicit details container is deliberately not part of headline discovery.
             for candidate in discoverNumbers(in: fields, rootObject: fields, path: [], depth: 0, remaining: 30) {
-                guard details.count < 6 else { break }
+                guard details.count < maximumDetailMetrics else { break }
                 let originalPath = object["__pulse_details"] == nil ? "details." + candidate.path : "__pulse_details." + candidate.path
                 let label = normalizedLabel(candidate.label)
                 guard !headlinePaths.contains(originalPath), labels.insert(label).inserted else { continue }
@@ -184,7 +186,7 @@ public struct HTTPConnector: SummaryConnector {
             }
         } else if let rows = explicit as? [[String: Any]] {
             for row in rows.prefix(60) {
-                guard details.count < 6 else { break }
+                guard details.count < maximumDetailMetrics else { break }
                 guard let label = cleanText(row["label"], limit: 40),
                       let value = displayValue(row["value"]) else { continue }
                 let identity = cleanText(row["id"], limit: 200) ?? label
@@ -195,7 +197,7 @@ public struct HTTPConnector: SummaryConnector {
         }
 
         for candidate in discoverSummaryNumbers(in: object) {
-            guard details.count < 6 else { break }
+            guard details.count < maximumDetailMetrics else { break }
             guard !headlinePaths.contains(candidate.path), labels.insert(normalizedLabel(candidate.label)).inserted else { continue }
             details.append(MetricValue(id: MetricIdentity.uuid(projectID: connection.id, path: "extra:" + candidate.path), label: candidate.label, value: candidate.previewValue))
         }
@@ -207,7 +209,7 @@ public struct HTTPConnector: SummaryConnector {
         var result: [MetricBreakdown] = []
         var groupIDs: Set<String> = []
         for group in groups.prefix(20) {
-            guard result.count < 2 else { break }
+            guard result.count < maximumBreakdowns else { break }
             guard let title = cleanText(group["title"], limit: 80),
                   let rawRows = group["rows"] as? [[String: Any]] else { continue }
             let identity = cleanText(group["id"], limit: 200) ?? title

@@ -182,23 +182,57 @@ struct PulsePanel: View {
     }
 
     private func metricMenu(_ project: ProjectConnection, source: ProjectSnapshot) -> some View {
-        Menu {
+        let candidates = source.metricCatalog
+        let headlines = store.snapshot(for: project.id)?.metrics ?? []
+        return Menu {
             Section("Headline") {
-                ForEach(source.metrics) { metric in
-                    metricToggle(metric, projectID: project.id)
+                ForEach(candidates) { metric in
+                    if headlines.count == 3, !headlines.contains(where: { $0.id == metric.id }) {
+                        Menu(metric.label) {
+                            ForEach(headlines) { current in
+                                Button("Replace \(current.label)") {
+                                    Task {
+                                        do { try await store.replaceHeadline(metric.id, replacing: current.id, projectID: project.id) }
+                                        catch { errorTitle = "Couldn’t save KPIs"; viewError = error.localizedDescription }
+                                    }
+                                }
+                            }
+                        }
+                    } else { metricToggle(metric, projectID: project.id, placement: .headline) }
                 }
             }
-            if let details = source.details, !details.isEmpty {
-                Section("More") {
-                    ForEach(details) { metric in
-                        metricToggle(metric, projectID: project.id)
+            Menu("More") {
+                ForEach(candidates) { metric in
+                    metricToggle(metric, projectID: project.id, placement: .drawer)
+                }
+            }
+            if let groups = source.breakdowns, !groups.isEmpty {
+                Menu("Breakdowns") {
+                    ForEach(groups) { group in
+                        Toggle(group.title, isOn: Binding(
+                            get: { store.breakdownIsVisible(group.id, projectID: project.id) },
+                            set: { visible in
+                                Task {
+                                    do { try await store.setBreakdownVisible(visible, breakdownID: group.id, projectID: project.id) }
+                                    catch { errorTitle = "Couldn’t save KPIs"; viewError = error.localizedDescription }
+                                }
+                            }
+                        )).disabled(!store.breakdownIsVisible(group.id, projectID: project.id) && (store.snapshot(for: project.id)?.breakdowns?.count ?? 0) >= 2)
+                    }
+                }
+            }
+            if store.metricVisibilities[project.id].map({ $0 != MetricVisibility() }) ?? false {
+                Divider()
+                Button("Reset KPIs") {
+                    Task {
+                        do { try await store.resetKPIs(projectID: project.id) }
+                        catch { errorTitle = "Couldn’t save KPIs"; viewError = error.localizedDescription }
                     }
                 }
             }
             if source.coverage != nil {
                 Divider()
                 Button("About this data") {
-                    // Present after the native menu has finished tracking.
                     DispatchQueue.main.async { infoProject = project.id }
                 }
             }
@@ -214,17 +248,17 @@ struct PulsePanel: View {
         }
     }
 
-    private func metricToggle(_ metric: MetricValue, projectID: UUID) -> some View {
+    private func metricToggle(_ metric: MetricValue, projectID: UUID, placement: MetricPlacement) -> some View {
         Toggle(metric.label, isOn: Binding(
-            get: { store.metricIsVisible(metric.id, projectID: projectID) },
+            get: { store.metricIsVisible(metric.id, projectID: projectID, placement: placement) },
             set: { visible in
                 Task {
-                    do { try await store.setMetricVisible(visible, metricID: metric.id, projectID: projectID) }
+                    do { try await store.setMetricVisible(visible, metricID: metric.id, projectID: projectID, placement: placement) }
                     catch { errorTitle = "Couldn’t save KPIs"; viewError = error.localizedDescription }
                 }
             }
         ))
-        .disabled(!store.canHideMetric(metric.id, projectID: projectID))
+        .disabled(!store.canSetMetric(metric.id, visible: !store.metricIsVisible(metric.id, projectID: projectID, placement: placement), projectID: projectID, placement: placement))
     }
 
     @ViewBuilder private func projectName(_ project: ProjectConnection) -> some View {
@@ -245,7 +279,7 @@ struct PulsePanel: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(metric.value).font(.system(size: large ? 22 : 17, weight: .medium, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
                 .contentTransition(.numericText()).animation(reduceMotion ? nil : DrawerMotion.numbers, value: metric.value)
-            Text(metric.label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(metric.label)
+            Text(metric.label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8).help(metric.label)
         }.accessibilityElement(children: .combine)
     }
 

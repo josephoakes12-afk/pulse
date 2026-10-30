@@ -31,7 +31,22 @@ public struct DatabaseRelationship: Codable, Equatable, Sendable {
 public struct DatabaseAnalyticsPlan: Codable, Equatable, Sendable {
     public var version: Int
     public var relationships: [DatabaseRelationship]
-    public init(relationships: [DatabaseRelationship], version: Int = 1) { self.version = version; self.relationships = relationships }
+    public var columns: [DatabaseColumn]?
+    public init(relationships: [DatabaseRelationship], version: Int = 1, columns: [DatabaseColumn]? = nil) {
+        self.version = version; self.relationships = relationships; self.columns = columns
+    }
+}
+
+/// Structural evidence only. Enum labels come from pg_enum, not source records.
+public struct DatabaseColumn: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable { case boolean, enumeration, timestamp }
+    public var table: DatabaseTable
+    public var name: String
+    public var kind: Kind
+    public var enumValues: [String]
+    public init(table: DatabaseTable, name: String, kind: Kind, enumValues: [String] = []) {
+        self.table = table; self.name = name; self.kind = kind; self.enumValues = enumValues
+    }
 }
 
 public enum MetricIdentity {

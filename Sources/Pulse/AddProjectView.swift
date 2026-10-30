@@ -231,7 +231,9 @@ struct AddProjectView: View {
                 if !recommended.isEmpty {
                     tableSelection = Set(recommended.map(\.id))
                     var configured = try PostgresConnector.countingConnection(base: base, tables: recommended)
-                    configured = PostgresConnector.configureAnalytics(base: configured, tables: recommended, relationships: foundRelationships)
+                    let columns = (try? await PostgresConnector().discoverColumns(connection: base, secret: credential, tables: recommended)) ?? []
+                    try Task.checkCancellation()
+                    configured = PostgresConnector.configureAnalytics(base: configured, tables: recommended, relationships: foundRelationships, columns: columns)
                     let snapshot = try await store.collect(configured, secret: effectiveSecret.isEmpty ? nil : effectiveSecret)
                     try Task.checkCancellation()
                     connected = configured
@@ -250,7 +252,9 @@ struct AddProjectView: View {
         do {
             let selectedTables = tables.filter { tableSelection.contains($0.id) }
             var configured = try PostgresConnector.countingConnection(base: connected, tables: selectedTables)
-            configured = PostgresConnector.configureAnalytics(base: configured, tables: selectedTables, relationships: relationships)
+            let columns = (try? await PostgresConnector().discoverColumns(connection: connected, secret: secret.isEmpty ? nil : secret, tables: selectedTables)) ?? []
+            try Task.checkCancellation()
+            configured = PostgresConnector.configureAnalytics(base: configured, tables: selectedTables, relationships: relationships, columns: columns)
             let snapshot = try await store.collect(configured, secret: secret.isEmpty ? nil : secret)
             try Task.checkCancellation()
             self.connected = configured
