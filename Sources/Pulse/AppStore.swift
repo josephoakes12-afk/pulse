@@ -25,10 +25,24 @@ final class AppStore: ObservableObject {
     private var started = false
     private var isMutating = false
     private var inspectedConnections: Set<String> = []
+    private var pendingRangeReveals: [UUID: MetricTimeRange] = [:]
 
     var isDemo: Bool { connections.isEmpty && showExamples }
-    var displayedConnections: [ProjectConnection] { isDemo ? demoProjects : connections }
+    var displayedConnections: [ProjectConnection] {
+        if isDemo { return demoProjects }
+        return connections.filter { isVisibleInSelectedRange($0) }
+    }
+    var unavailableConnections: [ProjectConnection] {
+        isDemo ? [] : connections.filter { !isVisibleInSelectedRange($0) }
+    }
     var isRefreshing: Bool { !refreshing.isEmpty }
+
+    private func isVisibleInSelectedRange(_ connection: ProjectConnection) -> Bool {
+        // A pending or failed collection must remain visible. Hide only a
+        // successfully measured source that explicitly cannot supply this range.
+        guard errors[connection.id] == nil, let snapshot = snapshots[connection.id] else { return true }
+        return snapshot.supports(selectedRange)
+    }
 
     init() {
         do {
@@ -80,6 +94,12 @@ final class AppStore: ObservableObject {
     }
 
     func selectRange(_ range: MetricTimeRange) {
+        // An explicit choice wins even while a newly added source is loading.
+        pendingRangeReveals.removeAll()
+        setSelectedRange(range)
+    }
+
+    private func setSelectedRange(_ range: MetricTimeRange) {
         selectedRange = range
         guard let viewStateURL else { return }
         do {
@@ -138,6 +158,12 @@ final class AppStore: ObservableObject {
             guard isCurrent(connection) else { return }
             snapshots[connection.id] = snapshot
             errors.removeValue(forKey: connection.id)
+            // Setup should reveal the newly connected source, including an API
+            // that supplies totals only. Routine polls never change the range.
+            if let originalRange = pendingRangeReveals.removeValue(forKey: connection.id), selectedRange == originalRange,
+               !snapshot.supports(selectedRange), let range = snapshot.supports(.lifetime) ? .lifetime : snapshot.availableRanges.first {
+                setSelectedRange(range)
+            }
             if pending.count > 3, let first = pending.first, let last = pending.last {
                 guard isCurrent(connection), connection.notificationsEnabled else { return }
                 let summary = PulseEvent(id: "batch:\(first.id):\(last.id)", title: "\(pending.count) new events. \(last.title)", occurredAt: last.occurredAt)
@@ -205,6 +231,7 @@ final class AppStore: ObservableObject {
         isMutating = true
         defer { isMutating = false }
         var connection = candidate
+        let isNewConnection = !connections.contains { $0.id == connection.id }
         guard let storage else { throw PulseError.storage("Local storage is unavailable.") }
         try ConnectorValidation.validate(connection)
         let previous = try credentials.load(for: connection.id)
@@ -227,6 +254,7 @@ final class AppStore: ObservableObject {
             else { try? credentials.delete(for: connection.id) }
             throw error
         }
+        if isNewConnection { pendingRangeReveals[connection.id] = selectedRange }
         connections = updated
         if needsInspection { inspectedConnections.remove(inspectionKey(connection)) }
         else if connection.sourceTables != nil { inspectedConnections.insert(inspectionKey(connection)) }
@@ -269,6 +297,7 @@ final class AppStore: ObservableObject {
         try credentials.delete(for: connection.id)
         do { try await storage.removeProject(connection.id) }
         catch { if let previous { try? credentials.save(secret: previous, for: connection.id) }; throw error }
+        pendingRangeReveals.removeValue(forKey: connection.id)
         connections.removeAll { $0.id == connection.id }
         snapshots.removeValue(forKey: connection.id)
         errors.removeValue(forKey: connection.id)

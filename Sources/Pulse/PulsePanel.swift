@@ -7,10 +7,15 @@ struct PulsePanel: View {
     @State private var expanded: UUID?
     @State private var hovered: UUID?
     @State private var iconError: String?
+    @State private var infoProject: UUID?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         IntegralPanelLayout { panelContent }.background(.regularMaterial)
+            .onChange(of: store.selectedRange) { _, _ in
+                expanded = nil
+                infoProject = nil
+            }
             .alert("Couldn’t change icon", isPresented: Binding(get: { iconError != nil }, set: { if !$0 { iconError = nil } })) {
                 Button("OK") { iconError = nil }
             } message: { Text(iconError ?? "") }
@@ -26,10 +31,18 @@ struct PulsePanel: View {
                 Menu {
                     ForEach(MetricTimeRange.allCases, id: \.self) { range in
                         Button {
-                            withAnimation(reduceMotion ? nil : DrawerMotion.reveal) { store.selectRange(range) }
+                            store.selectRange(range)
                         } label: {
                             if range == store.selectedRange { Label(range.title, systemImage: "checkmark") }
                             else { Text(range.title) }
+                        }
+                    }
+                    if !store.unavailableConnections.isEmpty {
+                        Divider()
+                        Section("No history for this range") {
+                            ForEach(store.unavailableConnections) { project in
+                                Button(project.name) { AppWindows.showConnections(store: store, selecting: project.id) }
+                            }
                         }
                     }
                 } label: { Text(store.selectedRange.shortTitle).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary) }
@@ -79,8 +92,18 @@ struct PulsePanel: View {
 
     private var emptyState: some View {
         VStack(spacing: 12) {
-            Image(systemName: "square.stack.3d.up").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
-            Button("Add Project") { AppWindows.showAddProject(store: store) }.buttonStyle(.borderedProminent).controlSize(.small)
+            if !store.unavailableConnections.isEmpty {
+                Text("No data for this range").font(.system(size: 12)).foregroundStyle(.secondary)
+                if let range = MetricTimeRange.allCases.first(where: { candidate in
+                    store.unavailableConnections.contains { store.rawSnapshot(for: $0.id)?.supports(candidate) == true }
+                }) {
+                    Button("Show \(range == .lifetime ? "lifetime" : range.shortTitle)") { store.selectRange(range) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+            } else {
+                Image(systemName: "square.stack.3d.up").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
+                Button("Add Project") { AppWindows.showAddProject(store: store) }.buttonStyle(.borderedProminent).controlSize(.small)
+            }
         }.frame(maxWidth: .infinity).padding(.vertical, 32)
     }
 
@@ -108,7 +131,14 @@ struct PulsePanel: View {
                         else if let error = store.errors[project.id] { Image(systemName: "exclamationmark.circle").font(.system(size: 11)).foregroundStyle(.orange).help(error).accessibilityLabel("Connection needs attention") }
                         else if let snapshot, !store.isDemo, Date().timeIntervalSince(snapshot.measuredAt) > Double(project.intervalSeconds * 3) { Image(systemName: "clock").font(.system(size: 11)).foregroundStyle(.orange).help("Data is older than expected") }
                         else if let coverage = snapshot?.coverage ?? rawSnapshot?.coverage, !store.isDemo {
-                            Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary).help(coverage).accessibilityLabel(coverage)
+                            Button { infoProject = infoProject == project.id ? nil : project.id } label: {
+                                Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary)
+                                    .frame(width: 18, height: 18).contentShape(Rectangle())
+                            }.buttonStyle(.plain).help("About this data").accessibilityLabel("About \(project.name) data")
+                                .popover(isPresented: Binding(get: { infoProject == project.id }, set: { if !$0, infoProject == project.id { infoProject = nil } }), arrowEdge: .trailing) {
+                                    Text(coverage).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                                        .textSelection(.enabled).frame(width: 250, alignment: .leading).padding(14)
+                                }
                         }
                         if hasDetails {
                             Button {

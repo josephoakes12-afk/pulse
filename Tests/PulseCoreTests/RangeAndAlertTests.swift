@@ -7,6 +7,33 @@ private func rangeConnection() -> ProjectConnection {
                       metrics: [MetricDefinition(label: "Accounts", path: "metrics.accounts"), MetricDefinition(label: "Bookings", path: "metrics.bookings")], notificationsEnabled: true)
 }
 
+@Test func youngProjectsAndEmptyPeriodsKeepEveryDeclaredRangeAvailable() throws {
+    let payload = Data(#"{"metrics":{"accounts":2,"bookings":1},"ranges":{"24h":{"metrics":{"accounts":0,"bookings":0}},"7d":{"metrics":{"accounts":2,"bookings":1}},"30d":{"metrics":{"accounts":2,"bookings":1}},"lifetime":{"metrics":{"accounts":2,"bookings":1}}}}"#.utf8)
+    let snapshot = try HTTPConnector.snapshot(data: payload, connection: rangeConnection())
+    #expect(snapshot.availableRanges == MetricTimeRange.allCases)
+    for range in MetricTimeRange.allCases {
+        #expect(snapshot.supports(range))
+        #expect(snapshot.forRange(range) != nil)
+    }
+    #expect(snapshot.forRange(.last24Hours)?.metrics.map(\.value) == ["0", "0"])
+    #expect(snapshot.forRange(.last30Days)?.metrics.map(\.value) == snapshot.forRange(.lifetime)?.metrics.map(\.value))
+}
+
+@Test func rangeAvailabilityDoesNotPromoteRetainedOrMalformedSummariesIntoHistory() throws {
+    let connection = rangeConnection()
+    let retained = try HTTPConnector.snapshot(data: Data(#"{"metrics":{"accounts":8,"bookings":40},"ranges":{"24h":{"metrics":{"accounts":2,"bookings":14}},"7d":{"metrics":{"accounts":8,"bookings":40}}}}"#.utf8), connection: connection)
+    #expect(retained.availableRanges == [.last24Hours, .last7Days])
+    #expect(!retained.supports(.last30Days))
+    #expect(!retained.supports(.lifetime))
+    let malformed = try HTTPConnector.snapshot(data: Data(#"{"metrics":{"accounts":8,"bookings":40},"ranges":{"7d":{"metrics":{"accounts":8}},"unknown":{"metrics":{"accounts":8,"bookings":40}}}}"#.utf8), connection: connection)
+    #expect(malformed.availableRanges.isEmpty)
+    #expect(MetricTimeRange.allCases.allSatisfy { !malformed.supports($0) })
+    let legacy = try HTTPConnector.snapshot(data: Data(#"{"metrics":{"accounts":8,"bookings":40}}"#.utf8), connection: connection)
+    #expect(legacy.availableRanges == [.lifetime])
+    #expect(legacy.supports(.lifetime))
+    #expect(!legacy.supports(.last7Days))
+}
+
 @Test func declaredRangesApplyLabelsAndPreserveIndependentAlertMetadata() throws {
     let payload = Data(#"{"metrics":{"accounts":100,"bookings":200},"ranges":{"24h":{"metrics":{"accounts":2,"bookings":14},"labels":{"metrics.accounts":"New accounts","metrics.bookings":"New bookings"},"coverage":"Last 24 hours","details":[{"id":"active","label":"Active accounts","value":3}],"breakdowns":[{"title":"Bookings by business","rows":[{"label":"Example","value":14}]}]},"7d":{"metrics":{"accounts":8,"bookings":40}},"30d":{"metrics":{"accounts":20,"bookings":90}},"lifetime":{"metrics":{"accounts":100,"bookings":200}},"invented":{"metrics":{"accounts":999}}},"alerts":{"counters":[{"id":"accounts","label":"Accounts","value":100,"unitSingular":"account","unitPlural":"accounts"}],"daily":[{"id":"bookings","label":"Bookings","today":14,"yesterday":12,"day":"2026-10-30"}]}}"#.utf8)
     let snapshot = try HTTPConnector.snapshot(data: payload, connection: rangeConnection())

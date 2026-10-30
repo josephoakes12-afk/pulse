@@ -21,6 +21,17 @@ public struct MetricRangeSnapshot: Codable, Equatable, Sendable {
 }
 
 public extension ProjectSnapshot {
+    /// Availability is declared by the source, not inferred from a project's age
+    /// or its first recorded event. An empty period can still be a valid range.
+    var availableRanges: [MetricTimeRange] {
+        guard let ranges else { return [.lifetime] }
+        return MetricTimeRange.allCases.filter { ranges[$0.rawValue] != nil }
+    }
+
+    func supports(_ range: MetricTimeRange) -> Bool {
+        ranges?[range.rawValue] != nil || (ranges == nil && range == .lifetime)
+    }
+
     /// Range switching uses only already-fetched summaries and never infers a
     /// short-period count from a lifetime total. Alert observations are independent.
     func forRange(_ range: MetricTimeRange) -> ProjectSnapshot? {
