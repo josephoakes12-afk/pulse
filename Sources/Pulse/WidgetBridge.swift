@@ -24,7 +24,8 @@ final class WidgetBridge {
             app.$snapshots.map { _ in () }.eraseToAnyPublisher(),
             app.$metricVisibilities.map { _ in () }.eraseToAnyPublisher(),
             app.$selectedRange.map { _ in () }.eraseToAnyPublisher(),
-            app.$errors.map { _ in () }.eraseToAnyPublisher()
+            app.$errors.map { _ in () }.eraseToAnyPublisher(),
+            app.$cloudSummary.map { _ in () }.eraseToAnyPublisher()
         ]
         changes = Publishers.MergeMany(publishers)
             .debounce(for: .milliseconds(150), scheduler: DispatchQueue.main)
@@ -33,9 +34,7 @@ final class WidgetBridge {
 
     private func publish() {
         guard let app else { return }
-        var snapshot = WidgetSnapshotBuilder.make(connections: app.connections, snapshots: app.snapshots,
-                                                  visibility: app.metricVisibilities, defaultRange: app.selectedRange,
-                                                  errors: Set(app.errors.keys))
+        var snapshot = app.widgetSnapshot()
         // A failed refresh with unchanged data should not spend another reload.
         if let lastSnapshot {
             snapshot.generatedAt = lastSnapshot.generatedAt

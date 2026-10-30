@@ -38,6 +38,16 @@ Ad hoc development builds omit live widgets because App Group access needs a rea
 
 Widgets currently run on macOS. iPhone/iPad widgets would need a companion app and optional summary synchronization; Mac widgets do not appear on those devices automatically.
 
+Private iCloud sync is optional at build time. The official app uses `uk.co.builtby2.pulse`. For a fork, choose your own globally unique reverse-DNS identifier, register that explicit App ID with CloudKit, associate your own iCloud container, and generate a **Developer ID** provisioning profile for the signing certificate. Deploy [Cloud/Schema.ckdb](../Cloud/Schema.ckdb) to that container's Production environment. The schema is private-only and grants no public-database access. Set these alongside the signing identity when building or packaging:
+
+```sh
+export PULSE_BUNDLE_IDENTIFIER='com.example.pulse'
+export PULSE_CLOUDKIT_CONTAINER='iCloud.com.example.pulse'
+export PULSE_CLOUDKIT_PROFILE='/absolute/path/to/Pulse.provisionprofile'
+```
+
+The builder validates the profile's team, selected App ID, certificate, expiry and CloudKit authorization, embeds it, and signs only the required Production CloudKit privileges. The widget identifier follows the selected App ID with `.widgets`; its extension keeps App Group privileges and reads the host's display cache. Profiles and Apple credentials stay outside the repository. Builds without the CloudKit variables remain local-only and need no iCloud setup. `python3 -m unittest discover -s Tests/Packaging` checks signing configuration with synthetic data.
+
 For a local packaging check, `scripts/package-release.sh 0.1.0 --unsigned` produces explicitly labelled previews. They are not the public download.
 
 Before publishing, mount the final disk image, verify its contents, and launch the copied app with a fresh local profile. Test installation on the oldest supported macOS version and both CPU families before claiming those combinations have been tested. Upload only the final DMG, ZIP and checksum file to a tagged GitHub release.

@@ -1,5 +1,6 @@
 import AppKit
 import PulseCore
+import PulseWidgetData
 import SwiftUI
 
 struct PulsePanel: View {
@@ -68,7 +69,8 @@ struct PulsePanel: View {
             }.padding(.horizontal, 20).padding(.top, 19).padding(.bottom, 17)
             Divider().padding(.horizontal, 20)
 
-            if store.displayedConnections.isEmpty { emptyState }
+            if store.isCloudReceiver { cloudProjectList }
+            else if store.displayedConnections.isEmpty { emptyState }
             else if store.displayedConnections.count > 3 {
                 ScrollViewReader { proxy in
                     ScrollView { projectList }.scrollBounceBehavior(.basedOnSize).frame(height: 460)
@@ -92,6 +94,7 @@ struct PulsePanel: View {
                     Button("Add Project…") { AppWindows.showAddProject(store: store) }
                     Button("Refresh") { Task { await store.refreshAll() } }.keyboardShortcut("r").disabled(store.isDemo || store.isRefreshing || store.connections.isEmpty)
                     Button("Connections…") { AppWindows.showConnections(store: store) }.keyboardShortcut(",")
+                    Button("iCloud…") { AppWindows.showCloudSync(store: store) }
                     if store.connections.isEmpty { Button(store.showExamples ? "Hide example projects" : "Show example projects") { store.showExamples.toggle() } }
                     Divider()
                     Button("Quit Pulse") { NSApp.terminate(nil) }.keyboardShortcut("q")
@@ -99,6 +102,43 @@ struct PulsePanel: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Pulse settings").accessibilityLabel("Pulse settings")
             }.padding(.horizontal, 20).padding(.vertical, 13)
         }.frame(width: 364).fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var cloudProjectList: some View {
+        if store.cloudProjects.count > 3 {
+            ScrollView { cloudProjectRows }.scrollBounceBehavior(.basedOnSize).frame(height: 460)
+        } else { cloudProjectRows }
+    }
+
+    private var cloudProjectRows: some View {
+        VStack(spacing: 0) {
+            if store.cloudProjects.isEmpty {
+                Text("No summary for this range").font(.system(size: 12)).foregroundStyle(.secondary).padding(24)
+            } else {
+                ForEach(Array(store.cloudProjects.enumerated()), id: \.element.id) { index, project in
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: project.symbol).font(.system(size: 17)).foregroundStyle(.secondary)
+                            .frame(width: 32, height: 32).background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text(project.name).font(.system(size: 13, weight: .semibold))
+                                Spacer()
+                                Image(systemName: "icloud").font(.system(size: 10)).foregroundStyle(.secondary).help("Summary from your iCloud account")
+                            }
+                            if let range = project.range(rawValue: store.selectedRange.rawValue) {
+                                HStack(alignment: .firstTextBaseline, spacing: 15) {
+                                    ForEach(range.metrics) { metric in
+                                        metricCell(MetricValue(id: metric.id, label: metric.label, value: metric.value), large: true)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                        }
+                    }.padding(.horizontal, 20).padding(.vertical, 16)
+                    if index < store.cloudProjects.count - 1 { Divider().padding(.leading, 65).padding(.trailing, 20) }
+                }
+            }
+        }.padding(.vertical, 4)
     }
 
     private var projectList: some View {
@@ -315,6 +355,10 @@ struct PulsePanel: View {
     }
 
     private func footer(now: Date) -> String {
+        if store.isCloudReceiver {
+            guard let oldest = store.cloudProjects.compactMap({ $0.range(rawValue: store.selectedRange.rawValue)?.measuredAt }).min() else { return "From iCloud" }
+            return now.timeIntervalSince(oldest) < 60 ? "iCloud · Updated just now" : "iCloud · Updated \(oldest.formatted(.relative(presentation: .numeric)))"
+        }
         if store.isDemo { return "Example data" }
         if store.connections.isEmpty { return "Local to this Mac" }
         if store.isRefreshing { return "Updating…" }
@@ -326,6 +370,11 @@ struct PulsePanel: View {
     }
 
     private var statusColor: Color {
+        if store.isCloudReceiver {
+            return store.cloudProjects.contains { project in
+                project.hasError || project.range(rawValue: store.selectedRange.rawValue).map { Date().timeIntervalSince($0.measuredAt) > 900 } ?? true
+            } ? .orange : .green
+        }
         if store.isDemo || store.connections.isEmpty || store.connections.allSatisfy({ !$0.enabled }) { return .secondary }
         if !store.errors.isEmpty || store.connections.filter(\.enabled).contains(where: { project in
             guard let snapshot = store.snapshots[project.id] else { return true }

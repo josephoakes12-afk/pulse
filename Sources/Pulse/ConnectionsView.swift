@@ -6,6 +6,7 @@ struct ConnectionsView: View {
     @ObservedObject var store: AppStore
     var initialSelection: UUID? = nil
     @State private var selectedID: UUID?
+    @State private var showingCloud = false
     @State private var editor: EditorItem?
     @State private var removeCandidate: ProjectConnection?
     @State private var error: String?
@@ -21,6 +22,15 @@ struct ConnectionsView: View {
                         }.tag(project.id).padding(.vertical, 3)
                     }
                 }
+                Section {
+                    Button {
+                        selectedID = nil
+                        showingCloud = true
+                    } label: { Label("iCloud", systemImage: "icloud") }
+                    .buttonStyle(.plain)
+                    .listRowBackground(showingCloud ? Color.accentColor.opacity(0.12) : Color.clear)
+                    .accessibilityLabel("iCloud sync settings")
+                }
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
             .safeAreaInset(edge: .bottom) {
@@ -31,7 +41,9 @@ struct ConnectionsView: View {
                 }.buttonStyle(.borderless).padding(12).background(.bar)
             }
         } detail: {
-            if let project = store.connections.first(where: { $0.id == selectedID }) {
+            if showingCloud {
+                PrivateCloudSyncSettings(store: store)
+            } else if let project = store.connections.first(where: { $0.id == selectedID }) {
                 Form {
                     Section {
                         LabeledContent("Connection", value: project.kind.title)
@@ -66,7 +78,7 @@ struct ConnectionsView: View {
                     Text("Bring your projects together.").font(.title3.weight(.semibold))
                     Text("Connect an API or database. Pick a few numbers.").font(.callout).foregroundStyle(.secondary)
                     Button("Add Project") { AppWindows.showAddProject(store: store) }.buttonStyle(.borderedProminent).controlSize(.regular)
-                    Text("Credentials stay in Keychain. Data stays on this Mac.").font(.caption).foregroundStyle(.tertiary).padding(.top, 14)
+                    Text("Credentials stay in Keychain.").font(.caption).foregroundStyle(.tertiary).padding(.top, 14)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(24)
             }
         }
@@ -87,7 +99,9 @@ struct ConnectionsView: View {
             if selectedID == nil { selectedID = connections.first?.id }
         }
         .onAppear { if selectedID == nil { selectedID = initialSelection ?? store.connections.first?.id } }
-        .onReceive(NotificationCenter.default.publisher(for: .pulseSelectProject)) { if let id = $0.object as? UUID { selectedID = id } }
+        .onChange(of: selectedID) { _, id in if id != nil { showingCloud = false } }
+        .onReceive(NotificationCenter.default.publisher(for: .pulseSelectProject)) { if let id = $0.object as? UUID { showingCloud = false; selectedID = id } }
+        .onReceive(NotificationCenter.default.publisher(for: .pulseShowCloudSync)) { _ in selectedID = nil; showingCloud = true }
     }
 
     private var localDataSection: some View {
@@ -164,7 +178,43 @@ struct CredentialEditor: View {
     }
 }
 
-extension Notification.Name { static let pulseSelectProject = Notification.Name("local.pulse.select-project") }
+extension Notification.Name {
+    static let pulseSelectProject = Notification.Name("local.pulse.select-project")
+    static let pulseShowCloudSync = Notification.Name("local.pulse.show-cloud-sync")
+}
+
+private struct PrivateCloudSyncSettings: View {
+    @ObservedObject var store: AppStore
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Private iCloud sync", isOn: Binding(get: { store.cloudSyncStatus.enabled }, set: { enabled in
+                    Task { await store.setCloudSyncEnabled(enabled) }
+                })).disabled(!store.cloudSyncStatus.configured || (store.cloudSyncStatus.working && !store.cloudSyncStatus.enabled))
+                LabeledContent("Status") {
+                    HStack(spacing: 6) {
+                        if store.cloudSyncStatus.working { ProgressView().controlSize(.mini) }
+                        Text(store.cloudSyncStatus.title).foregroundStyle(.secondary)
+                    }
+                }
+                if let verified = store.cloudSyncStatus.verifiedAt {
+                    LabeledContent("Last sync") { Text(verified, style: .relative).foregroundStyle(.secondary) }
+                }
+                if store.cloudSyncStatus.needsAccountApproval {
+                    Button("Use this Apple Account") { Task { await store.setCloudSyncEnabled(true) } }
+                } else if store.cloudSyncStatus.enabled {
+                    HStack {
+                        Button("Sync now") { store.syncCloudNow() }.disabled(store.cloudSyncStatus.working)
+                        if store.cloudSyncStatus.otherPublisherID != nil, !store.connections.isEmpty {
+                            Button("Use this Mac") { store.useThisMacForCloud() }.disabled(store.cloudSyncStatus.working)
+                        }
+                    }
+                }
+            } header: { Text("iCloud").font(.title3.weight(.semibold)) }
+            footer: { Text("Summary numbers and selected KPIs. Credentials stay on this Mac.") }
+        }.formStyle(.grouped)
+    }
+}
 
 struct ConnectionEditor: View {
     @ObservedObject var store: AppStore

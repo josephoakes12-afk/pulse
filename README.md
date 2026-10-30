@@ -28,6 +28,8 @@ For desktop widgets, right-click the desktop → **Edit Widgets → Pulse**. Cho
 
 Pulse runs on your Mac. Credentials stay in Keychain; settings and cached numbers stay in Application Support. Connections are read-only. There is no Pulse account or hosted service.
 
+Optional **Settings → iCloud** syncs headline summaries and KPI choices through your private Apple account. A receiving Mac can show those numbers and use them in widgets without database credentials. Keep the collecting Mac running for fresh numbers. iPhone and iPad need a future companion app.
+
 Refreshes run every five minutes while Pulse is open and your Mac is awake. Available history depends on the connected source.
 
 [Connection guide](docs/connections.md) · [Build and contribute](docs/development.md) · [MIT license](LICENSE)

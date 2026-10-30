@@ -11,6 +11,11 @@ cd "$PULSE_ROOT"
 PULSE_OUTPUT_DIR="${PULSE_OUTPUT_DIR:-$PULSE_ROOT/build}"
 PULSE_VERSION="${PULSE_VERSION:-0.1.0}"
 PULSE_BUILD_NUMBER="${PULSE_BUILD_NUMBER:-1}"
+PULSE_BUNDLE_IDENTIFIER="${PULSE_BUNDLE_IDENTIFIER:-uk.co.builtby2.pulse}"
+[[ "$PULSE_BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ \
+   && ${#PULSE_BUNDLE_IDENTIFIER} -le 247 ]] || {
+    echo "PULSE_BUNDLE_IDENTIFIER must be a reverse-DNS identifier with letters, numbers, periods and internal hyphens." >&2; exit 2;
+}
 PULSE_SIGN_IDENTITY="${PULSE_SIGN_IDENTITY:--}"
 PULSE_DEVELOPMENT_TEAM="${PULSE_DEVELOPMENT_TEAM:-}"
 if [[ -z "$PULSE_DEVELOPMENT_TEAM" && "$PULSE_SIGN_IDENTITY" == 'Developer ID Application:'* \
@@ -18,6 +23,18 @@ if [[ -z "$PULSE_DEVELOPMENT_TEAM" && "$PULSE_SIGN_IDENTITY" == 'Developer ID Ap
     PULSE_DEVELOPMENT_TEAM="${BASH_REMATCH[1]}"
 fi
 PULSE_BUILD_WIDGETS="${PULSE_BUILD_WIDGETS:-auto}"
+PULSE_CLOUDKIT_CONTAINER="${PULSE_CLOUDKIT_CONTAINER:-}"
+PULSE_CLOUDKIT_PROFILE="${PULSE_CLOUDKIT_PROFILE:-}"
+PULSE_BUILD_CLOUDKIT=0
+if [[ -n "$PULSE_CLOUDKIT_CONTAINER" || -n "$PULSE_CLOUDKIT_PROFILE" ]]; then
+    [[ "$PULSE_CLOUDKIT_CONTAINER" =~ ^iCloud\.[A-Za-z0-9][A-Za-z0-9.-]+$ \
+       && -f "$PULSE_CLOUDKIT_PROFILE" \
+       && "$PULSE_DEVELOPMENT_TEAM" =~ ^[A-Z0-9]{10}$ \
+       && "$PULSE_SIGN_IDENTITY" == 'Developer ID Application:'* ]] || {
+        echo "Private iCloud sync needs PULSE_CLOUDKIT_CONTAINER, PULSE_CLOUDKIT_PROFILE and a matching Developer ID signing team." >&2; exit 2;
+    }
+    PULSE_BUILD_CLOUDKIT=1
+fi
 if [[ "$PULSE_BUILD_WIDGETS" == auto ]]; then
     if [[ -n "$PULSE_DEVELOPMENT_TEAM" ]]; then PULSE_BUILD_WIDGETS=1; else PULSE_BUILD_WIDGETS=0; fi
 fi
@@ -53,6 +70,7 @@ mkdir -p "$PULSE_OUTPUT_DIR"
 PULSE_STAGE="$(mktemp -d "$PULSE_OUTPUT_DIR/.pulse-build.XXXXXX")"
 trap 'rm -rf "$PULSE_STAGE"' EXIT
 PULSE_APP="$PULSE_STAGE/Pulse.app"
+PULSE_APP_ENTITLEMENTS=""
 mkdir -p "$PULSE_APP/Contents/MacOS" "$PULSE_APP/Contents/Resources"
 cp "$PULSE_BIN_DIR/Pulse" "$PULSE_APP/Contents/MacOS/Pulse"
 find "$PULSE_BIN_DIR" -maxdepth 1 -type d -name '*.bundle' -exec cp -R {} "$PULSE_APP/Contents/Resources/" \;
@@ -97,7 +115,7 @@ cat > "$PULSE_APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-    <key>CFBundleIdentifier</key><string>local.pulse.app</string>
+    <key>CFBundleIdentifier</key><string>uk.co.builtby2.pulse</string>
     <key>CFBundleExecutable</key><string>Pulse</string>
     <key>CFBundleName</key><string>Pulse</string>
     <key>CFBundleDisplayName</key><string>Pulse</string>
@@ -116,11 +134,13 @@ cat > "$PULSE_APP/Contents/Info.plist" <<'PLIST'
     <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Joseph Oakes</string>
 </dict></plist>
 PLIST
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $PULSE_BUNDLE_IDENTIFIER" "$PULSE_APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $PULSE_VERSION" "$PULSE_APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $PULSE_BUILD_NUMBER" "$PULSE_APP/Contents/Info.plist"
 if [[ "$PULSE_BUILD_WIDGETS" == 1 ]]; then
     /usr/libexec/PlistBuddy -c "Add :PulseAppGroupIdentifier string $PULSE_APP_GROUP_IDENTIFIER" "$PULSE_APP/Contents/Info.plist"
     PULSE_APP_GROUP_IDENTIFIER="$PULSE_APP_GROUP_IDENTIFIER" \
+        PULSE_BUNDLE_IDENTIFIER="$PULSE_BUNDLE_IDENTIFIER" \
         "$PULSE_ROOT/scripts/build-widget.sh" "$PULSE_APP/Contents/PlugIns" "$PULSE_CONFIGURATION"
     cat > "$PULSE_STAGE/app.entitlements" <<ENTITLEMENTS
 <?xml version="1.0" encoding="UTF-8"?>
@@ -132,6 +152,17 @@ ENTITLEMENTS
     /usr/libexec/PlistBuddy -c "Add :com.apple.security.app-sandbox bool true" "$PULSE_STAGE/app.entitlements"
     cp "$PULSE_STAGE/app.entitlements" "$PULSE_STAGE/widget.entitlements"
     /usr/libexec/PlistBuddy -c "Delete :com.apple.security.app-sandbox" "$PULSE_STAGE/app.entitlements"
+    PULSE_APP_ENTITLEMENTS="$PULSE_STAGE/app.entitlements"
+fi
+if [[ "$PULSE_BUILD_CLOUDKIT" == 1 ]]; then
+    python3 "$PULSE_ROOT/scripts/configure-cloudkit.py" \
+        --profile "$PULSE_CLOUDKIT_PROFILE" --team "$PULSE_DEVELOPMENT_TEAM" \
+        --container "$PULSE_CLOUDKIT_CONTAINER" --sign-identity "$PULSE_SIGN_IDENTITY" \
+        --bundle-id "$PULSE_BUNDLE_IDENTIFIER" \
+        --entitlements "$PULSE_STAGE/app.entitlements"
+    cp "$PULSE_CLOUDKIT_PROFILE" "$PULSE_APP/Contents/embedded.provisionprofile"
+    /usr/libexec/PlistBuddy -c "Add :PulseCloudContainerIdentifier string $PULSE_CLOUDKIT_CONTAINER" "$PULSE_APP/Contents/Info.plist"
+    PULSE_APP_ENTITLEMENTS="$PULSE_STAGE/app.entitlements"
 fi
 sign_code() {
     local PULSE_CODE_PATH="$1"
@@ -152,13 +183,13 @@ if [[ "$PULSE_BUILD_WIDGETS" == 1 ]]; then
     while IFS= read -r -d '' PULSE_LIBRARY; do sign_code "$PULSE_LIBRARY"; done \
         < <(find "$PULSE_WIDGET/Contents/Frameworks" -type f -name '*.dylib' -print0)
     sign_code "$PULSE_WIDGET" "$PULSE_STAGE/widget.entitlements"
-    sign_code "$PULSE_APP" "$PULSE_STAGE/app.entitlements"
+fi
+sign_code "$PULSE_APP" "$PULSE_APP_ENTITLEMENTS"
+if [[ "$PULSE_BUILD_WIDGETS" == 1 || "$PULSE_BUILD_CLOUDKIT" == 1 ]]; then
     PULSE_ACTUAL_TEAM="$(codesign -d --verbose=4 "$PULSE_APP" 2>&1 | awk -F= '$1 == "TeamIdentifier" { print $2 }')"
     [[ "$PULSE_ACTUAL_TEAM" == "$PULSE_DEVELOPMENT_TEAM" ]] || {
-        echo "The signing certificate team does not match the widget App Group." >&2; exit 1;
+        echo "The signing certificate team does not match the configured capabilities." >&2; exit 1;
     }
-else
-    sign_code "$PULSE_APP"
 fi
 codesign --verify --deep --strict "$PULSE_APP"
 if [[ "${PULSE_ARCHITECTURES:-native}" == universal ]]; then

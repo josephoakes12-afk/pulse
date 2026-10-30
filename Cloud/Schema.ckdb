@@ -1,0 +1,5 @@
+DEFINE SCHEMA
+    // Pulse only uses the private database. No public-database grants.
+    RECORD TYPE PulseSummaryV1 (
+        payload BYTES
+    );

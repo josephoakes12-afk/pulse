@@ -9,6 +9,11 @@ PULSE_CONFIGURATION="${2:-release}"
 }
 PULSE_VERSION="${PULSE_VERSION:-0.1.0}"
 PULSE_BUILD_NUMBER="${PULSE_BUILD_NUMBER:-1}"
+PULSE_BUNDLE_IDENTIFIER="${PULSE_BUNDLE_IDENTIFIER:-uk.co.builtby2.pulse}"
+[[ "$PULSE_BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ \
+   && ${#PULSE_BUNDLE_IDENTIFIER} -le 247 ]] || {
+    echo "PULSE_BUNDLE_IDENTIFIER must be a reverse-DNS identifier with letters, numbers, periods and internal hyphens." >&2; exit 2;
+}
 PULSE_APP_GROUP_IDENTIFIER="${PULSE_APP_GROUP_IDENTIFIER:-}"
 [[ "$PULSE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version must be major.minor.patch." >&2; exit 2; }
 [[ "$PULSE_BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "Build number must be numeric." >&2; exit 2; }
@@ -43,6 +48,7 @@ xcodebuild -quiet \
     "ARCHS=$PULSE_WIDGET_ARCHITECTURES" ONLY_ACTIVE_ARCH=NO \
     "SYMROOT=$PULSE_WIDGET_BUILD_ROOT/Products" "OBJROOT=$PULSE_WIDGET_BUILD_ROOT/Intermediates" \
     "PULSE_APP_GROUP_IDENTIFIER=$PULSE_APP_GROUP_IDENTIFIER" \
+    "PRODUCT_BUNDLE_IDENTIFIER=$PULSE_BUNDLE_IDENTIFIER.widgets" \
     "MARKETING_VERSION=$PULSE_VERSION" "CURRENT_PROJECT_VERSION=$PULSE_BUILD_NUMBER" \
     "OTHER_SWIFT_FLAGS=$PULSE_WIDGET_FLAGS" \
     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build

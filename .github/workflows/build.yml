@@ -16,6 +16,8 @@ jobs:
           persist-credentials: false
       - name: Test release configuration
         run: swift test --configuration release
+      - name: Check signing profile validation
+        run: python3 -m unittest discover -s Tests/Packaging
       - name: Build local app bundle
         run: scripts/build-app.sh
       - name: Build native widget extension

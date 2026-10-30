@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import PulseCore
+import PulseWidgetData
 import UserNotifications
 
 enum MetricPlacement { case headline, drawer }
@@ -15,6 +16,8 @@ final class AppStore: ObservableObject {
     @Published private(set) var refreshing: Set<UUID> = []
     @Published private(set) var recentEvents: [UUID: [PulseEvent]] = [:]
     @Published private(set) var metricVisibilities: [UUID: MetricVisibility] = [:]
+    @Published private(set) var cloudSyncStatus = PrivateCloudSyncStatus()
+    @Published private(set) var cloudSummary: WidgetSnapshot?
     @Published var widgetFocusProjectID: UUID?
     @Published var storageError: String?
     @Published var showExamples: Bool = true
@@ -32,8 +35,14 @@ final class AppStore: ObservableObject {
     private var pendingRangeReveals: [UUID: MetricTimeRange] = [:]
     private var visibilityWrites: [UUID: (id: UUID, task: Task<Void, Error>)] = [:]
     private var widgetBridge: WidgetBridge?
+    private var cloudSyncBridge: PrivateCloudSyncController?
+    private var dataDirectoryURL: URL?
 
-    var isDemo: Bool { connections.isEmpty && showExamples }
+    var isDemo: Bool { connections.isEmpty && cloudSummary == nil && showExamples }
+    var isCloudReceiver: Bool { connections.isEmpty && cloudSummary != nil }
+    var cloudProjects: [WidgetProject] {
+        cloudSummary?.projects.filter { $0.enabled && $0.range(rawValue: selectedRange.rawValue) != nil } ?? []
+    }
     var displayedConnections: [ProjectConnection] {
         if isDemo { return demoProjects }
         return connections.filter { isVisibleInSelectedRange($0) }
@@ -60,6 +69,7 @@ final class AppStore: ObservableObject {
                 directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent(arguments.contains("--demo") ? "Pulse Demo" : "Pulse", isDirectory: true)
             }
             storage = try LocalStore(databaseURL: directory.appendingPathComponent("pulse.sqlite"))
+            dataDirectoryURL = directory
             viewStateURL = directory.appendingPathComponent("view-state.json")
             if let viewStateURL, let data = try? Data(contentsOf: viewStateURL),
                let saved = try? JSONDecoder().decode([String: String].self, from: data),
@@ -79,6 +89,12 @@ final class AppStore: ObservableObject {
         if ProcessInfo.processInfo.arguments.contains("--empty") { showExamples = false }
         if ProcessInfo.processInfo.arguments.contains("--demo") { connections = []; snapshots = [:]; showExamples = true }
         widgetBridge = WidgetBridge(app: self)
+        if let directory = dataDirectoryURL {
+            cloudSyncBridge = PrivateCloudSyncController(app: self, directory: directory)
+            if ProcessInfo.processInfo.arguments.contains("--enable-icloud-sync") {
+                Task { await cloudSyncBridge?.setEnabled(true) }
+            }
+        }
         if connections.contains(where: \.notificationsEnabled) { Task { await requestNotificationAuthorization() } }
         // Every 30s, check which sources are due. Only due connections perform network work.
         timer = Task { [weak self] in
@@ -91,6 +107,25 @@ final class AppStore: ObservableObject {
         observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.refreshAll() }
         })
+    }
+
+    func setCloudSyncEnabled(_ enabled: Bool) async { await cloudSyncBridge?.setEnabled(enabled) }
+    func syncCloudNow() { cloudSyncBridge?.syncNow() }
+    func useThisMacForCloud() { cloudSyncBridge?.useThisMac() }
+    func setCloudSyncStatus(_ status: PrivateCloudSyncStatus) { cloudSyncStatus = status }
+    func setCloudSummary(_ summary: WidgetSnapshot?) {
+        let first = cloudSummary == nil
+        cloudSummary = summary
+        if first, connections.isEmpty, let raw = summary?.defaultRangeRawValue,
+           let range = MetricTimeRange(rawValue: raw) { selectRange(range) }
+    }
+    func widgetSnapshot() -> WidgetSnapshot {
+        if connections.isEmpty, var summary = cloudSummary {
+            summary.defaultRangeRawValue = selectedRange.rawValue
+            return summary
+        }
+        return WidgetSnapshotBuilder.make(connections: connections, snapshots: snapshots,
+            visibility: metricVisibilities, defaultRange: selectedRange, errors: Set(errors.keys))
     }
 
     func snapshot(for id: UUID) -> ProjectSnapshot? {

@@ -172,6 +172,11 @@ enum AppWindows {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    static func showCloudSync(store: AppStore) {
+        showConnections(store: store)
+        DispatchQueue.main.async { NotificationCenter.default.post(name: .pulseShowCloudSync, object: nil) }
+    }
+
     static func showPreview(store: AppStore) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 364, height: 680), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Pulse"
