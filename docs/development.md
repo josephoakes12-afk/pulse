@@ -9,7 +9,7 @@ scripts/run.sh
 
 `scripts/build-app.sh` builds `build/Pulse.app` without opening it. Local builds are ad hoc signed for development. Release bundles remove debugging symbols and remap build paths; `scripts/run.sh debug` keeps symbols for development.
 
-The repository has three main areas:
+The main areas are:
 
 - `Sources/Pulse`: the native Mac interface.
 - `Sources/PulseCore`: connectors, models, Keychain and local persistence.
