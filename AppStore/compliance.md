@@ -1,51 +1,41 @@
 # Submission decisions
 
-Prepared 31 October 2026. These are review notes, not an Apple approval or a legal classification. Leave the app unsubmitted for Joseph’s final review.
+Submitted 31 October 2026 at `2026-10-31T12:39:34.484Z`. Apple reports **Waiting for Review** for version **0.1.0**, build **7**, submission `333230c1-edc8-4af3-b66d-220123a0f5fe`. These notes record the declarations; they are not Apple approval or a legal classification.
 
 ## Identity and distribution
 
-- Draft name accepted: **Pulse: Project Metrics**, App Store Connect app `6829198481`.
-- Mac only; English (UK); primary **Developer Tools**, secondary **Productivity**.
-- Free; no purchases, subscriptions, ads or account registration.
-- Standard Apple licence for the Store listing; the source repository keeps its MIT licence.
-- Manual release. Do not press **Add for Review**, **Submit for Review** or **Release This Version** before Joseph reviews it.
-- Support/privacy URLs in metadata are public and their anonymous responses have been verified.
-- Authorised reviewer contact details were reused from the same BuiltBy2 Apple account and verified saved, without storing private contact values in the review receipts.
+- **Pulse: Project Metrics**, App Store Connect app `6829198481`.
+- Mac only; English (UK); primary **Developer Tools**, secondary **Productivity**; Apple-calculated **4+** rating.
+- Free in 174 territories. France is excluded at Joseph’s request pending its encryption documentation requirements.
+- No purchases, subscriptions, ads or Pulse account registration.
+- Standard Apple licence for the Store listing; MIT licence for the source repository.
+- **Manual release** retained. No public App Store release has been made.
+- Public support/privacy URLs and authorised reviewer contact were verified saved. Private contact values are omitted from receipts.
 
 ## Privacy label
 
-Saved, unpublished response: **Data Not Collected**, for Joseph's final review. The binary/dependency audit found no developer analytics, advertising or remote diagnostic SDK.
+Published: **Data Not Collected**. The binary/dependency audit found no developer analytics, advertising or remote diagnostic SDK.
 
-Reason: Pulse processes source data on-device; it has no developer analytics, advertising SDK, tracking or hosted backend. Its user-selected API/database requests go directly to the user’s chosen source. Optional CloudKit summaries go to the user’s private Apple database, which BuiltBy2 cannot access. Apple states that data processed only on-device is not collected for the label and that developers are not responsible for declaring data collected by Apple itself.
+Pulse processes source data on-device. User-selected API/database requests go directly to the chosen source. Optional CloudKit summaries use the user’s private Apple database, which BuiltBy2 cannot access. Apple excludes on-device processing and data collected by Apple itself from the developer’s label.
 
-Before saving that response, confirm the Store binary contains no extra telemetry or remote logging SDK and no developer-operated sample endpoint that retains request data. Standard TLS network metadata is handled by the source provider. Optional support email or public GitHub issues are user-initiated support channels; do not add an in-app diagnostic upload without revisiting the privacy response.
+Source requests and optional private iCloud sync do leave the device. Do not claim that nothing leaves it or that CloudKit payloads are end-to-end encrypted. Revisit the label if developer telemetry or diagnostic uploads are added.
 
-Do not claim that nothing leaves the device: source requests and optional private iCloud sync do leave it. Do not claim end-to-end encryption; the current payload uses an ordinary private CloudKit field.
+## Content rights and accessibility
 
-## Age rating and rights
+Saved: `USES_THIRD_PARTY_CONTENT`. Pulse accesses external API/database content only through the user’s authorised sources. It supplies no third-party catalogue. Marketing captures use labelled fictional data; bundled dependency redistribution notices are included. Do not imply provider endorsement.
 
-The expected rating is **4+**, calculated by Apple from the current questionnaire. Answer from the final binary, rather than forcing a rating. Pulse has no messaging, social feed, advertisements, user-to-user content publishing, web browser, game, gambling or sensitive-content catalogue. External source links open the default browser. It displays the metrics and source records that the user is authorised to access. Confirm any applicable updated questionnaire wording in App Store Connect, including user-generated content and unrestricted web access, before saving.
+External source links open the default browser. Pulse has no messaging, social feed, advertisements, user-to-user publishing, embedded browser, game, gambling or sensitive-content catalogue. Accessibility claims must reflect tested features; no unverified label is asserted.
 
-App content rights: the app is designed for a user to access their own authorised sources. It does not provide a third-party catalogue. Marketing captures use fictional names and data. Do not imply an endorsement from PostgreSQL, Supabase or Apple.
+## Encryption export answers
 
-Accessibility claims should reflect tested features only. Do not select a nutrition label merely because a native control is present.
+Pulse uses URLSession HTTPS, CloudKit/Keychain and PostgreSQL TLS through PostgresNIO + swift-nio-ssl, which embeds BoringSSL. It is **not limited to encryption built into Apple’s operating system**. Its main purpose is displaying project metrics, and its application code adds no proprietary cryptographic algorithm.
 
-## Encryption export review
+The submitted questionnaire selected **standard encryption algorithms instead of, or in addition to, Apple’s operating system** and **No** to distribution in France. After those answers, Apple recorded `usesNonExemptEncryption: false` for build 7. This was not inferred from HTTPS alone. No French declaration has been filed; France must remain excluded until the applicable requirements are fulfilled.
 
-Pulse uses HTTPS through URLSession, Apple CloudKit/Keychain security and standard PostgreSQL TLS through PostgresNIO + swift-nio-ssl. The last dependency embeds BoringSSL, so the app is **not limited to encryption built into Apple’s operating system**. There is no proprietary cryptographic algorithm in Pulse’s application code.
+## Verification and limits
 
-For Apple’s questionnaire, the factual encryption inventory is: encryption is used; standard cryptography is used in addition to Apple OS services; Pulse’s main purpose is displaying project metrics rather than cryptography, VPN, secure communications or security tooling.
+Joseph approved the banner captures and authorised submission once CI passed. Apple validated and processed build 7 successfully. Five ordered 2880×1800 banner panels are complete, with fictional sample data and no production credentials.
 
-Joseph must confirm the exemption/classification and territory decisions before submission, including any France-specific documentation or US reporting obligation. Do not automatically set `ITSAppUsesNonExemptEncryption = NO` simply because part of the app uses HTTPS. Once the determination is established, record it and configure the Info.plist key or Apple-provided compliance code accordingly. A missing compliance answer can hold an uploaded build without submitting the app.
+Local QA passed 173 Swift tests and 17 packaging checks. [CI run 41199627070](https://github.com/josephoakes12-afk/pulse/actions/runs/41199627070) passed on Apple silicon and Intel for binary source `b9cccb36ffd9700b8bca1816629715acea964f61`. Sandboxed local acceptance covered authenticated HTTP after restart, PostgreSQL discovery, setup-file import, cache/offline recovery and a read-only private CloudKit probe. An actual App Store installation and reception on a second Mac have not been established.
 
-## Final review gate
-
-- [ ] Store app sandbox, outgoing requests, import/icon picker, Keychain, local persistence, widgets, optional alerts and iCloud tested.
-- [ ] All displayed sample data labelled; no user credentials or production records in screenshots or reviewer resources.
-- [ ] Five ordered 2880×1800 banner tiles and continuous master reviewed.
-- [ ] Listing copy, name, categories, price, copyright, support and privacy URLs reviewed.
-- [ ] Privacy, rights, age-rating, accessibility and encryption responses confirmed.
-- [ ] Exact build/version selected and processed successfully in App Store Connect.
-- [ ] Manual release selected; no review submission or public release performed.
-
-Sources: [Apple privacy details](https://developer.apple.com/app-store/app-privacy-details/), [App information](https://developer.apple.com/help/app-store-connect/reference/app-information/app-information), [Age rating](https://developer.apple.com/help/app-store-connect/manage-app-information/set-an-app-age-rating), [Export compliance](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance), [Encryption declarations](https://developer.apple.com/documentation/security/complying-with-encryption-export-regulations).
+Sources: [Apple privacy details](https://developer.apple.com/app-store/app-privacy-details/), [App information](https://developer.apple.com/help/app-store-connect/reference/app-information/app-information), [Age rating](https://developer.apple.com/help/app-store-connect/manage-app-information/set-an-app-age-rating), [Export compliance](https://developer.apple.com/help/app-store-connect/manage-app-information/overview-of-export-compliance), [Encryption documentation](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption/).
