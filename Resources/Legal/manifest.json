@@ -1,0 +1,20 @@
+[
+  {
+    "component": "CNIOBoringSSL",
+    "dependency": "swift-nio-ssl",
+    "revisionFile": "Sources/CNIOBoringSSL/hash.txt",
+    "revision": "817ab07ebb53da35afea409ab9328f578492832d",
+    "sourceURL": "https://raw.githubusercontent.com/google/boringssl/817ab07ebb53da35afea409ab9328f578492832d/LICENSE",
+    "licenseFile": "CNIOBoringSSL-LICENSE.txt",
+    "sha256": "756a61a8300d105ae68e7f2993e27d41a765c946f3400422e2403b01e7ded527"
+  },
+  {
+    "component": "CCryptoBoringSSL",
+    "dependency": "swift-crypto",
+    "revisionFile": "Sources/CCryptoBoringSSL/hash.txt",
+    "revision": "0226f30467f540a3f62ef48d453f93927da199b6",
+    "sourceURL": "https://raw.githubusercontent.com/google/boringssl/0226f30467f540a3f62ef48d453f93927da199b6/LICENSE",
+    "licenseFile": "CCryptoBoringSSL-LICENSE.txt",
+    "sha256": "827c8d8fc207c2392794eef9e00fe246f9f61fdcc132556c275be3dd8c3cd97f"
+  }
+]

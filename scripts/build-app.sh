@@ -145,6 +145,10 @@ for PULSE_DEPENDENCY in "$PULSE_ROOT"/.build/checkouts/*; do
         install -m 644 "$PULSE_NOTICE" "$PULSE_LICENSES/$PULSE_DEPENDENCY_NAME/$(basename "$PULSE_NOTICE")"
     done < <(find "$PULSE_DEPENDENCY" -maxdepth 1 -type f \( -iname 'LICENSE*' -o -iname 'NOTICE*' -o -iname 'COPYING*' \) -print0)
 done
+python3 "$PULSE_ROOT/scripts/copy-legal-notices.py" \
+    --legal-directory "$PULSE_ROOT/Resources/Legal" \
+    --checkouts-directory "$PULSE_ROOT/.build/checkouts" \
+    --destination "$PULSE_LICENSES/BoringSSL"
 swift "$PULSE_ROOT/scripts/generate-icon.swift" "$PULSE_STAGE"
 iconutil --convert icns "$PULSE_STAGE/AppIcon.iconset" --output "$PULSE_APP/Contents/Resources/AppIcon.icns"
 cat > "$PULSE_APP/Contents/Info.plist" <<'PLIST'
