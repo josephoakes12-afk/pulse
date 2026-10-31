@@ -11,9 +11,11 @@ Draft for Joseph’s final review. Saving metadata or uploading a build does not
 
 Use the same compact Pulse app, with App Store signing, sandboxing and Store-managed updates. Existing GitHub connections do not need to migrate; users can reconnect in the Store version.
 
-The proposed listing name is **Pulse: Project Metrics**. App Store Connect must confirm availability. The app itself remains Pulse.
+The listing name **Pulse: Project Metrics** has been accepted for draft app `6829198481` in App Store Connect. The app itself remains Pulse.
 
 Prepared for version **0.1.0**, build **6**. Confirm the processed build matches before attaching it.
+
+The en-GB listing copy, categories, factual age-rating questionnaire and review notes are saved in the remote draft. Release mode is **Manual**. Reviewer contact details, privacy/export/rights decisions, the processed build and final media still need their final checks.
 
 Suggested public URLs after these files are published and checked anonymously:
 
