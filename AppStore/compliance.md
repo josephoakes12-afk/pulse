@@ -4,17 +4,17 @@ Prepared 31 October 2026. These are review notes, not an Apple approval or a leg
 
 ## Identity and distribution
 
-- Proposed name: **Pulse: Project Metrics**; check availability in App Store Connect.
+- Draft name accepted: **Pulse: Project Metrics**, App Store Connect app `6829198481`.
 - Mac only; English (UK); primary **Developer Tools**, secondary **Productivity**.
 - Free; no purchases, subscriptions, ads or account registration.
 - Standard Apple licence for the Store listing; the source repository keeps its MIT licence.
 - Manual release. Do not press **Add for Review**, **Submit for Review** or **Release This Version** before Joseph reviews it.
-- Support/privacy URLs in metadata are usable only after the corresponding files are public and their anonymous responses have been verified.
-- Reviewer contact details must come from the account’s authorised contact, not a guessed phone number.
+- Support/privacy URLs in metadata are public and their anonymous responses have been verified.
+- Authorised reviewer contact details were reused from the same BuiltBy2 Apple account and verified saved, without storing private contact values in the review receipts.
 
 ## Privacy label
 
-Proposed response: **Data Not Collected**, subject to a final Store-binary audit.
+Saved, unpublished response: **Data Not Collected**, for Joseph's final review. The binary/dependency audit found no developer analytics, advertising or remote diagnostic SDK.
 
 Reason: Pulse processes source data on-device; it has no developer analytics, advertising SDK, tracking or hosted backend. Its user-selected API/database requests go directly to the user’s chosen source. Optional CloudKit summaries go to the user’s private Apple database, which BuiltBy2 cannot access. Apple states that data processed only on-device is not collected for the label and that developers are not responsible for declaring data collected by Apple itself.
 
