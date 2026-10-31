@@ -8,7 +8,9 @@ A small native app for accounts, bookings, players, readers, or anything else yo
 
 ## Install
 
-A signed Mac download is being prepared. For now, [build from source](docs/development.md).
+[Download for Mac](https://github.com/josephoakes12-afk/pulse/releases/latest/download/Pulse-0.1.0-macOS.dmg). Open the DMG and drag Pulse to Applications.
+
+[Build from source](docs/development.md).
 
 macOS 14 or later · Apple silicon and Intel
 
