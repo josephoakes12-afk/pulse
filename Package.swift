@@ -16,6 +16,7 @@ let package = Package(
         .target(name: "PulseCore", dependencies: ["CSQLite", "PulseWidgetData", .product(name: "PostgresNIO", package: "postgres-nio"), .product(name: "NIOSSL", package: "swift-nio-ssl"), .product(name: "Logging", package: "swift-log")]),
         .executableTarget(name: "Pulse", dependencies: ["PulseCore", "PulseWidgetData"]),
         .testTarget(name: "PulseCoreTests", dependencies: ["PulseCore", "PulseWidgetData"]),
+        .testTarget(name: "PulseAppTests", dependencies: ["Pulse", "PulseCore"]),
         .testTarget(name: "PulseWidgetDataTests", dependencies: ["PulseWidgetData"])
     ]
 )

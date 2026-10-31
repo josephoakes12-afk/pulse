@@ -14,6 +14,7 @@ final class AppPreferences: ObservableObject {
     @Published private(set) var updateMessage: String?
     @Published private(set) var availableReleaseURL: URL?
     let canConfigureLoginItem: Bool
+    let canCheckForUpdates: Bool
     let versionLabel: String
     private let installedVersion: PulseAppVersion?
     private let releaseClient: PulseReleaseClient
@@ -21,6 +22,7 @@ final class AppPreferences: ObservableObject {
 
     init(bundle: Bundle = .main, releaseClient: PulseReleaseClient = PulseReleaseClient()) {
         self.releaseClient = releaseClient
+        canCheckForUpdates = PulseDistribution(bundle: bundle).allowsDirectUpdates
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
         let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
         installedVersion = PulseAppVersion(version: version, build: build)
@@ -73,7 +75,7 @@ final class AppPreferences: ObservableObject {
     func openLoginItemsSettings() { SMAppService.openSystemSettingsLoginItems() }
 
     func checkForUpdates() async {
-        guard !checkingForUpdates else { return }
+        guard canCheckForUpdates, !checkingForUpdates else { return }
         guard let installedVersion else { updateMessage = "Version unavailable in this build."; return }
         checkingForUpdates = true
         updateMessage = "Checking…"
@@ -93,7 +95,7 @@ final class AppPreferences: ObservableObject {
     }
 
     func openAvailableRelease() {
-        guard let availableReleaseURL else { return }
+        guard canCheckForUpdates, let availableReleaseURL else { return }
         if !NSWorkspace.shared.open(availableReleaseURL) { updateMessage = "Couldn’t open the download page." }
     }
 }

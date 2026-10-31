@@ -70,6 +70,10 @@ done < <(otool -l "$PULSE_WIDGET_BINARY" | awk '
     /cmd LC_RPATH/ { getline; getline; sub(/^[[:space:]]*path /, ""); sub(/ \(offset.*$/, ""); print }
 ' | sort -u)
 if [[ "$PULSE_CONFIGURATION" == release ]]; then
+    if [[ -n "${PULSE_DSYM_OUTPUT_DIR:-}" ]]; then
+        mkdir -p "$PULSE_DSYM_OUTPUT_DIR"
+        dsymutil "$PULSE_WIDGET_BINARY" --out "$PULSE_DSYM_OUTPUT_DIR/PulseWidgets.appex.dSYM"
+    fi
     strip -S -x "$PULSE_WIDGET_BINARY"
     while IFS= read -r -d '' PULSE_WIDGET_FILE; do
         if LC_ALL=C /usr/bin/grep -aFq "$PULSE_ROOT/" "$PULSE_WIDGET_FILE" \

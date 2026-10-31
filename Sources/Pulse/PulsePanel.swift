@@ -97,6 +97,7 @@ struct PulsePanel: View {
                     Button("Settings…") { AppWindows.showGeneralSettings(store: store) }.keyboardShortcut(",")
                     Button("iCloud…") { AppWindows.showCloudSync(store: store) }
                     if store.connections.isEmpty { Button(store.showExamples ? "Hide example projects" : "Show example projects") { store.showExamples.toggle() } }
+                    if !store.isDemo { Button("Example Projects…") { AppWindows.showExamples() } }
                     Divider()
                     Button("Quit Pulse") { NSApp.terminate(nil) }.keyboardShortcut("q")
                 } label: { Image(systemName: "gearshape").font(.system(size: 12)) }

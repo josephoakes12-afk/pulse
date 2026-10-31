@@ -1,0 +1,18 @@
+Pulse is a native macOS menu-bar utility for read-only project metrics. It does not require a Pulse account or subscription.
+
+On first launch, the small Pulse window appears. You can reopen it from the waveform icon in the menu bar. Settings is available from the gear menu or Command-comma.
+
+Review without a database:
+1. Choose Pulse → Example Projects… from the menu bar. An isolated window titled “Pulse — Example Projects” opens with clearly labelled fictional data for Booking Studio, Playroom and The Daily; it requires no credentials or remote service.
+2. Change the range between 24 hours, 7 days, 30 days and lifetime.
+3. Open a project’s info menu to select headline KPIs and drawer details.
+4. Expand the disclosure arrow to see extra KPIs and a short breakdown. Click a project icon to inspect the symbol/image picker.
+5. Open Add Project to inspect API/JSON, PostgreSQL and Supabase connection setup. A real connection uses the reviewer’s own authorised source; no production credentials are supplied with this submission.
+
+Live sources connect directly from the Mac. PostgreSQL collection runs read-only transactions with bounded statement timeouts. API sources use summary JSON. Available KPIs and history depend on the selected source; unsupported historical ranges are omitted for that source.
+
+Desktop widgets: right-click the desktop, choose Edit Widgets, then Pulse. Project is small; Overview is medium. Widgets use headline snapshots from the app and macOS controls refresh timing. Keep Pulse running for fresh values.
+
+Optional notifications are local macOS notifications. Open at Login is opt-in. Optional private iCloud sync uses the user’s own Apple account and syncs headline summaries only; connection addresses, queries and credentials are not included. iCloud requires a signed-in Apple account and a second Mac for reception testing. No iPhone or iPad companion is included.
+
+The App Store build uses App Store-managed updates. Source code is available at https://github.com/josephoakes12-afk/pulse under the MIT licence.

@@ -217,16 +217,18 @@ private struct GeneralSettings: View {
             } header: { Text("General").font(.title3.weight(.semibold)) }
             Section {
                 LabeledContent("Version", value: preferences.versionLabel)
-                HStack {
-                    Button("Check for Updates") { Task { await preferences.checkForUpdates() } }
-                        .disabled(preferences.checkingForUpdates)
-                    if preferences.checkingForUpdates { ProgressView().controlSize(.small) }
-                    if preferences.availableReleaseURL != nil {
-                        Button("Download…") { preferences.openAvailableRelease() }
+                if preferences.canCheckForUpdates {
+                    HStack {
+                        Button("Check for Updates") { Task { await preferences.checkForUpdates() } }
+                            .disabled(preferences.checkingForUpdates)
+                        if preferences.checkingForUpdates { ProgressView().controlSize(.small) }
+                        if preferences.availableReleaseURL != nil {
+                            Button("Download…") { preferences.openAvailableRelease() }
+                        }
                     }
-                }
-                if let message = preferences.updateMessage {
-                    Text(message).font(.caption).foregroundStyle(.secondary)
+                    if let message = preferences.updateMessage {
+                        Text(message).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
         }.formStyle(.grouped)

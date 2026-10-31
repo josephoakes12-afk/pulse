@@ -10,6 +10,7 @@ enum MetricPlacement { case headline, drawer }
 @MainActor
 final class AppStore: ObservableObject {
     static let shared = AppStore()
+    let examplesOnly: Bool
     @Published private(set) var connections: [ProjectConnection] = []
     @Published private(set) var snapshots: [UUID: ProjectSnapshot] = [:]
     @Published private(set) var errors: [UUID: String] = [:]
@@ -59,7 +60,11 @@ final class AppStore: ObservableObject {
         return snapshot.supports(selectedRange)
     }
 
-    init() {
+    init(examplesOnly: Bool = false) {
+        self.examplesOnly = examplesOnly
+        // The review window has no database, credentials, timers or bridges.
+        // Every interaction in it is an in-memory presentation change.
+        guard !examplesOnly else { return }
         do {
             let arguments = ProcessInfo.processInfo.arguments
             let directory: URL
@@ -78,8 +83,9 @@ final class AppStore: ObservableObject {
     }
 
     func start() async {
-        guard !started, let storage else { return }
+        guard !started else { return }
         started = true
+        guard !examplesOnly, let storage else { return }
         do {
             connections = try await storage.loadConnections()
             metricVisibilities = try await storage.loadMetricVisibility()

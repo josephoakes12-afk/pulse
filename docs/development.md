@@ -52,6 +52,31 @@ For a local packaging check, `scripts/package-release.sh 0.1.0 --unsigned` produ
 
 Before publishing, mount the final disk image, verify its contents, and launch the copied app with a fresh local profile. Test installation on the oldest supported macOS version and both CPU families before claiming those combinations have been tested. Upload only the final DMG, ZIP and checksum file to a tagged GitHub release.
 
+## Mac App Store
+
+The Store build uses the same source with a separate distribution configuration. Its main app is sandboxed, permits outgoing connections and user-selected file reads, and uses Store-managed updates. Developer ID downloads retain their existing behavior.
+
+Use explicit **Mac App Store** profiles for the main app and widget, an **Apple Distribution** or **Mac App Distribution** application certificate, and a **Mac Installer Distribution** installer certificate. The main profile must authorize the selected Production CloudKit container when iCloud is included. The widget needs only its own App ID and the shared App Group; it never connects to databases or CloudKit.
+
+```sh
+export PULSE_SIGN_IDENTITY='Apple Distribution: Your Name (TEAMID)'
+export PULSE_INSTALLER_SIGN_IDENTITY='3rd Party Mac Developer Installer: Your Name (TEAMID)'
+export PULSE_DEVELOPMENT_TEAM='TEAMID'
+export PULSE_APP_STORE_PROFILE='/absolute/path/to/PulseStore.provisionprofile'
+export PULSE_WIDGET_PROFILE='/absolute/path/to/PulseWidgetsStore.provisionprofile'
+export PULSE_CLOUDKIT_CONTAINER='iCloud.com.example.pulse'
+export PULSE_BUILD_NUMBER='6'
+scripts/package-app-store.sh 0.1.0
+```
+
+Set `PULSE_BUNDLE_IDENTIFIER` for your own fork, as above. The App Group defaults to `TEAMID.local.pulse.shared`; `PULSE_APP_GROUP_IDENTIFIER` can select another authorized group. Apple permits team-prefixed macOS App Groups without portal registration. A registered `group.` identifier must be authorized in both profiles. Set optional `PULSE_SIGNING_KEYCHAIN` to a task-specific signing keychain to avoid changing the user's keychain search list.
+
+The script requires committed source and creates a universal `Pulse.xcarchive`, signed upload `.pkg`, checksum and build receipt under `build/app-store/<version>/`. It embeds and validates both profiles, stores debug symbols in the archive, and does not upload, submit, notarize or release anything. Use `PULSE_STORE_DIR` for a new output directory when rebuilding the same version. A Store-signed app is intended for Apple's processing; use an appropriately development-signed sandbox build for local runtime checks and TestFlight for distribution testing.
+
+For sandbox QA without packaging, set `PULSE_DISTRIBUTION_CHANNEL=app-store` and the Store signing variables above before `scripts/build-app.sh release`. Signing profiles, certificates, credentials and App Store receipts remain local. Do not set encryption-compliance declarations merely because the app uses HTTPS: the PostgreSQL connector bundles SwiftNIO SSL/BoringSSL and needs a declaration covering that implementation.
+
+[Apple packaging guidance](https://developer.apple.com/documentation/xcode/packaging-mac-software-for-distribution) · [App Sandbox](https://developer.apple.com/documentation/xcode/configuring-the-macos-app-sandbox) · [App Group containers](https://developer.apple.com/documentation/xcode/accessing-app-group-containers)
+
 ## Connector tests
 
 The normal suite uses synthetic data and never queries a real project. To try an HTTP source locally:

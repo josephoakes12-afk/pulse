@@ -314,6 +314,8 @@ struct AddProjectView: View {
         panel.message = "Choose a Pulse project setup file. Credentials are added separately."
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {
                 let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 guard size <= 65_536 else { throw PulseError.invalidConfiguration("Choose a setup file smaller than 64 KB.") }

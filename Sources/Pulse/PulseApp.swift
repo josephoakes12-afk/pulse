@@ -111,6 +111,13 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
 
     @objc private func showConnections() { AppWindows.showGeneralSettings(store: .shared) }
     @objc private func addProject() { AppWindows.showAddProject(store: .shared) }
+    @objc private func showExamples() { AppWindows.showExamples() }
+    @objc private func showSupport() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/josephoakes12-afk/pulse/blob/main/AppStore/support.md")!)
+    }
+    @objc private func showPrivacyPolicy() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/josephoakes12-afk/pulse/blob/main/AppStore/privacy.md")!)
+    }
 
     private func configureMenus() {
         let menu = NSMenu()
@@ -122,6 +129,8 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         add.target = self
         let settings = applicationMenu.addItem(withTitle: "Settings…", action: #selector(showConnections), keyEquivalent: ",")
         settings.target = self
+        let examples = applicationMenu.addItem(withTitle: "Example Projects…", action: #selector(showExamples), keyEquivalent: "")
+        examples.target = self
         applicationMenu.addItem(.separator())
         applicationMenu.addItem(withTitle: "Hide Pulse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         applicationMenu.addItem(withTitle: "Quit Pulse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -134,6 +143,15 @@ final class PulseAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         editItem.submenu = edit
         menu.addItem(editItem)
+        let help = NSMenu(title: "Help")
+        let support = help.addItem(withTitle: "Pulse Support", action: #selector(showSupport), keyEquivalent: "")
+        support.target = self
+        let privacy = help.addItem(withTitle: "Privacy Policy", action: #selector(showPrivacyPolicy), keyEquivalent: "")
+        privacy.target = self
+        let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
+        helpItem.submenu = help
+        menu.addItem(helpItem)
+        NSApp.helpMenu = help
         NSApp.mainMenu = menu
     }
 }
@@ -143,8 +161,10 @@ enum AppWindows {
     private static var connections: NSWindow?
     private static var preview: NSWindow?
     private static var addProject: NSWindow?
+    private static var examples: NSWindow?
 
     static func showAddProject(store: AppStore) {
+        let store = store.examplesOnly ? AppStore.shared : store
         if addProject?.isVisible != true {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 510, height: 470), styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = "Add Project"
@@ -162,6 +182,7 @@ enum AppWindows {
     }
 
     private static func showSettings(store: AppStore, destination: SettingsDestination) {
+        let store = store.examplesOnly ? AppStore.shared : store
         if connections == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 470), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = "Pulse Settings"
@@ -197,6 +218,24 @@ enum AppWindows {
         window.center()
         preview = window
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    static func showExamples() {
+        if examples == nil {
+            let store = AppStore(examplesOnly: true)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 364, height: 680), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = "Pulse — Example Projects"
+            let host = NSHostingView(rootView: PulsePanel(store: store)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(.regularMaterial))
+            host.sizingOptions = []
+            window.contentView = host
+            window.isReleasedWhenClosed = false
+            window.center()
+            examples = window
+        }
+        examples?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 }

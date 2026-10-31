@@ -93,9 +93,9 @@ public enum PulseError: LocalizedError, Equatable, Sendable {
 
 public enum DemoData {
     public static let projects: [ProjectConnection] = [
-        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, name: "Studio", symbol: "calendar", metrics: [MetricDefinition(label: "businesses", path: "businesses"), MetricDefinition(label: "bookings · 7d", path: "bookings")], link: "https://supabase.com/dashboard"),
-        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, name: "Playground", symbol: "gamecontroller", metrics: [MetricDefinition(label: "players · 7d", path: "players"), MetricDefinition(label: "games · 7d", path: "games")], link: "https://console.neon.tech/"),
-        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, name: "Journal", symbol: "newspaper", metrics: [MetricDefinition(label: "readers · 7d", path: "readers"), MetricDefinition(label: "signed in · 7d", path: "signedIn")], link: "https://supabase.com/dashboard")
+        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, name: "Booking Studio", symbol: "calendar", metrics: [MetricDefinition(label: "businesses", path: "businesses"), MetricDefinition(label: "bookings · 7d", path: "bookings")], link: "https://supabase.com/dashboard"),
+        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, name: "Playroom", symbol: "gamecontroller", metrics: [MetricDefinition(label: "players · 7d", path: "players"), MetricDefinition(label: "games · 7d", path: "games")], link: "https://console.neon.tech/"),
+        ProjectConnection(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, name: "The Daily", symbol: "newspaper", metrics: [MetricDefinition(label: "readers · 7d", path: "readers"), MetricDefinition(label: "signed in · 7d", path: "signedIn")], link: "https://supabase.com/dashboard")
     ]
     public static func snapshots(now: Date = Date()) -> [ProjectSnapshot] {
         zip(projects, [["12", "38"], ["46", "15"], ["210", "64"]]).enumerated().map { index, pair in

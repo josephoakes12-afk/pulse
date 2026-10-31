@@ -1,0 +1,16 @@
+{
+  "locale": "en-GB",
+  "name": "Pulse: Project Metrics",
+  "subtitle": "Your projects, at a glance",
+  "promotionalText": "A small home for your project numbers. Connect your sources, choose useful KPIs and keep them close in your Mac menu bar and desktop widgets.",
+  "description": "Your project numbers, in the Mac menu bar.\n\nPulse is a small native app for keeping an eye on the things you build. Connect an API, PostgreSQL or Supabase and choose the numbers that matter.\n\n• Discover useful KPIs from supported database structures.\n• Pick up to three headline numbers for each project.\n• Expand a project for extra KPIs and compact breakdowns.\n• Switch between 24 hours, 7 days, 30 days and lifetime where source history is available.\n• Keep numbers on your desktop with Project and Overview widgets.\n• Receive optional native notifications for new activity.\n• Share headline summaries between Macs with optional private iCloud sync.\n\nCredentials stay in Keychain. Connections are read-only. There is no Pulse account or Pulse-hosted backend.\n\nKeep Pulse running and your Mac awake for fresh numbers. Widgets follow macOS refresh scheduling. Available metrics and history depend on your source.\n\nFree and open source.",
+  "keywords": "kpi,dashboard,postgres,supabase,api,analytics,widget,developer,bookings,accounts,metrics,menu bar",
+  "primaryCategory": "DEVELOPER_TOOLS",
+  "secondaryCategory": "PRODUCTIVITY",
+  "supportUrl": "https://github.com/josephoakes12-afk/pulse/blob/main/AppStore/support.md",
+  "privacyPolicyUrl": "https://github.com/josephoakes12-afk/pulse/blob/main/AppStore/privacy.md",
+  "marketingUrl": "https://github.com/josephoakes12-afk/pulse",
+  "copyright": "2026 Joseph Oakes",
+  "price": "Free",
+  "releaseMode": "MANUAL"
+}
