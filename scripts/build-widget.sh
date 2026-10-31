@@ -62,6 +62,7 @@ PULSE_WIDGET_BINARY="$PULSE_WIDGET/Contents/MacOS/PulseWidgets"
 mkdir -p "$PULSE_WIDGET/Contents/Frameworks"
 xcrun swift-stdlib-tool --copy --scan-executable "$PULSE_WIDGET_BINARY" \
     --platform macosx --destination "$PULSE_WIDGET/Contents/Frameworks"
+"$PULSE_ROOT/scripts/trim-runtime-architectures.sh" "$PULSE_WIDGET_BINARY" "$PULSE_WIDGET/Contents/Frameworks"
 while IFS= read -r PULSE_WIDGET_RPATH; do
     if [[ "$PULSE_WIDGET_RPATH" == /* && "$PULSE_WIDGET_RPATH" != /usr/lib/swift ]]; then
         install_name_tool -delete_rpath "$PULSE_WIDGET_RPATH" "$PULSE_WIDGET_BINARY"

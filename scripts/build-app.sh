@@ -78,7 +78,7 @@ if [[ "$PULSE_BUILD_WIDGETS" == 1 ]]; then
 fi
 [[ "$PULSE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version must be major.minor.patch." >&2; exit 2; }
 [[ "$PULSE_BUILD_NUMBER" =~ ^[0-9]+$ ]] || { echo "Build number must be numeric." >&2; exit 2; }
-PULSE_BUILD_OPTIONS=(--configuration "$PULSE_CONFIGURATION")
+PULSE_BUILD_OPTIONS=(--configuration "$PULSE_CONFIGURATION" --sdk "$(xcrun --sdk macosx --show-sdk-path)")
 if [[ "$PULSE_CONFIGURATION" == release ]]; then
     # Keep developer home paths out of debug records and C/C++ __FILE__ strings.
     # These flags are supported by the Swift 6.2 / Clang toolchain baseline.
@@ -110,6 +110,7 @@ find "$PULSE_BIN_DIR" -maxdepth 1 -type d -name '*.bundle' -exec cp -R {} "$PULS
 mkdir -p "$PULSE_APP/Contents/Frameworks"
 xcrun swift-stdlib-tool --copy --scan-executable "$PULSE_APP/Contents/MacOS/Pulse" \
     --platform macosx --destination "$PULSE_APP/Contents/Frameworks"
+"$PULSE_ROOT/scripts/trim-runtime-architectures.sh" "$PULSE_APP/Contents/MacOS/Pulse" "$PULSE_APP/Contents/Frameworks"
 install_name_tool -add_rpath '@executable_path/../Frameworks' "$PULSE_APP/Contents/MacOS/Pulse"
 while IFS= read -r PULSE_RPATH; do
     if [[ "$PULSE_RPATH" == /* && "$PULSE_RPATH" != /usr/lib/swift ]]; then
@@ -220,11 +221,11 @@ if [[ "$PULSE_DISTRIBUTION_CHANNEL" == app-store ]]; then
             --profile "$PULSE_WIDGET_PROFILE" --team "$PULSE_DEVELOPMENT_TEAM" \
             --bundle-id "$PULSE_BUNDLE_IDENTIFIER.widgets" --app-group "$PULSE_APP_GROUP_IDENTIFIER" \
             --sign-identity "$PULSE_SIGN_IDENTITY" --entitlements "$PULSE_STAGE/widget.entitlements" "${PULSE_PROFILE_SIGNING_OPTIONS[@]}"
-        cp "$PULSE_WIDGET_PROFILE" "$PULSE_APP/Contents/PlugIns/PulseWidgets.appex/Contents/embedded.provisionprofile"
+        install -m 644 "$PULSE_WIDGET_PROFILE" "$PULSE_APP/Contents/PlugIns/PulseWidgets.appex/Contents/embedded.provisionprofile"
     fi
     if [[ "$PULSE_BUILD_CLOUDKIT" == 1 ]]; then PULSE_PROFILE_ARGUMENTS+=(--container "$PULSE_CLOUDKIT_CONTAINER"); fi
     python3 "$PULSE_ROOT/scripts/configure-cloudkit.py" "${PULSE_PROFILE_ARGUMENTS[@]}" "${PULSE_PROFILE_SIGNING_OPTIONS[@]}"
-    cp "$PULSE_APP_STORE_PROFILE" "$PULSE_APP/Contents/embedded.provisionprofile"
+    install -m 644 "$PULSE_APP_STORE_PROFILE" "$PULSE_APP/Contents/embedded.provisionprofile"
     PULSE_APP_ENTITLEMENTS="$PULSE_STAGE/app.entitlements"
 fi
 if [[ "$PULSE_BUILD_CLOUDKIT" == 1 && "$PULSE_DISTRIBUTION_CHANNEL" == direct ]]; then
@@ -233,7 +234,7 @@ if [[ "$PULSE_BUILD_CLOUDKIT" == 1 && "$PULSE_DISTRIBUTION_CHANNEL" == direct ]]
         --container "$PULSE_CLOUDKIT_CONTAINER" --sign-identity "$PULSE_SIGN_IDENTITY" \
         --bundle-id "$PULSE_BUNDLE_IDENTIFIER" \
         --entitlements "$PULSE_STAGE/app.entitlements" "${PULSE_PROFILE_SIGNING_OPTIONS[@]}"
-    cp "$PULSE_CLOUDKIT_PROFILE" "$PULSE_APP/Contents/embedded.provisionprofile"
+    install -m 644 "$PULSE_CLOUDKIT_PROFILE" "$PULSE_APP/Contents/embedded.provisionprofile"
     /usr/libexec/PlistBuddy -c "Add :PulseCloudContainerIdentifier string $PULSE_CLOUDKIT_CONTAINER" "$PULSE_APP/Contents/Info.plist"
     PULSE_APP_ENTITLEMENTS="$PULSE_STAGE/app.entitlements"
 fi
